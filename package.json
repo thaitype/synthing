@@ -2,7 +2,7 @@
   "name": "synthing",
   "description": "Synthesize Secrets. Orchestrate Everything.",
   "type": "module",
-  "version": "0.0.0",
+  "version": "0.0.1",
   "main": "./dist/cjs/index.js",
   "module": "./dist/esm/index.js",
   "types": "./dist/dts/index.d.ts",

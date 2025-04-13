@@ -2,7 +2,7 @@
   "lockfileVersion": 1,
   "workspaces": {
     "": {
-      "name": "typescript-npm-boilerplate-esm-cjs",
+      "name": "synthing",
       "dependencies": {
         "prettier": "^3.4.2",
       },

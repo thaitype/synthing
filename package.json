@@ -4,14 +4,22 @@
   "description": "Synthesize Secrets. Orchestrate Everything.",
   "private": true,
   "scripts": {
+    "prepare": "turbo run @synthing/mono#build --output-logs=errors-only",
     "build": "turbo run build",
+    "dev": "turbo run dev",
     "test": "turbo run test",
     "lint:check": "turbo run lint:check",
+    "lint:fix": "turbo run lint:fix",
     "check-types": "turbo run check-types",
-    "format": "turbo run format"
+    "format": "prettier --check \"./**/*.{ts,js}\"",
+    "format:fix": "prettier --write \"./**/*.{ts,js}\"",
+    "changeset": "changeset"
   },
   "devDependencies": {
-    "turbo": "^2.0.0"
+    "@changesets/cli": "^2.28.1",
+    "prettier": "^3.5.3",
+    "turbo": "^2.0.0",
+    "typescript": "^5.0.0"
   },
   "repository": {
     "type": "git",

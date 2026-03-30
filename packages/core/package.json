@@ -14,7 +14,7 @@
     }
   },
   "scripts": {
-    "build": "tsc && babel dist/esm --plugins @babel/plugin-transform-export-namespace-from --plugins @babel/plugin-transform-modules-commonjs --out-dir dist/cjs --source-maps && babel dist --plugins babel-plugin-annotate-pure-calls --out-dir dist --source-maps",
+    "build": "mono build",
     "test": "vitest run",
     "lint:check": "eslint src --max-warnings 0",
     "check-types": "tsc --noEmit"
@@ -27,6 +27,7 @@
     "@synthing/config-eslint": "workspace:*",
     "@synthing/config-typescript": "workspace:*",
     "@synthing/config-vitest": "workspace:*",
+    "@synthing/mono": "workspace:*",
     "babel-plugin-annotate-pure-calls": "^0.4.0",
     "eslint": "^9.22.0",
     "typescript": "^5.0.0",

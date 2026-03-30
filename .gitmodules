@@ -1,0 +1,3 @@
+[submodule "ref/kubricate"]
+	path = ref/kubricate
+	url = https://github.com/thaitype/kubricate.git

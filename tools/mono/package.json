@@ -1,0 +1,40 @@
+{
+  "name": "@synthing/mono",
+  "type": "module",
+  "version": "0.0.1",
+  "private": true,
+  "exports": {
+    ".": "./src/cli.ts"
+  },
+  "bin": {
+    "mono": "dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "lint:check": "eslint ./src",
+    "lint:fix": "eslint --fix ./src",
+    "check-types": "tsc --noEmit"
+  },
+  "peerDependencies": {
+    "@babel/cli": ">=7.24.5 <8.0.0",
+    "@babel/core": ">=7.24.5 <8.0.0",
+    "@babel/plugin-transform-export-namespace-from": ">=7.24.1 <8.0.0",
+    "@babel/plugin-transform-modules-commonjs": ">=7.24.1 <8.0.0",
+    "babel-plugin-annotate-pure-calls": ">=0.4.0 <1.0.0"
+  },
+  "dependencies": {
+    "@thaitype/mono-scripts": "^0.1.1"
+  },
+  "devDependencies": {
+    "@babel/cli": ">=7.24.5 <8.0.0",
+    "@babel/core": ">=7.24.5 <8.0.0",
+    "@babel/plugin-transform-export-namespace-from": ">=7.24.1 <8.0.0",
+    "@babel/plugin-transform-modules-commonjs": ">=7.24.1 <8.0.0",
+    "@synthing/config-eslint": "workspace:*",
+    "@synthing/config-typescript": "workspace:*",
+    "@types/node": "^22.13.9",
+    "babel-plugin-annotate-pure-calls": ">=0.4.0 <1.0.0",
+    "eslint": "^9.22.0",
+    "typescript": "^5.0.0"
+  }
+}

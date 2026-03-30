@@ -1,0 +1,17 @@
+{
+  "name": "@synthing/config-vitest",
+  "type": "module",
+  "version": "0.0.1",
+  "private": true,
+  "exports": {
+    "./base": "./dist/configs/base-config.js"
+  },
+  "scripts": {
+    "build": "tsc"
+  },
+  "devDependencies": {
+    "@synthing/config-typescript": "workspace:*",
+    "typescript": "^5.0.0",
+    "vitest": "^3.0.0"
+  }
+}

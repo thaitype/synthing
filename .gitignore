@@ -185,3 +185,5 @@ dist
 packages/*/dist
 configs/*/dist
 tools/*/dist
+
+.claude/worktrees

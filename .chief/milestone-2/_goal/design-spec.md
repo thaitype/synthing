@@ -334,7 +334,7 @@ export default defineConfig({
 Pipelines use a **discriminated union on `type`**:
 
 - `"generator"` — Phase 1. Uses generators to produce output.
-- `"text"` — Future. Reads files with `$${{var.xxx}}` tags, language-agnostic.
+- `"text"` — Phase 1. Reads files with `$${{var.xxx}}` tags, replaces with resolved values. Language-agnostic.
 
 ### 6.3 Generator Pipeline
 
@@ -346,7 +346,28 @@ interface GeneratorPipeline {
 }
 ```
 
-### 6.4 Writer
+### 6.4 Text Pipeline
+
+```ts
+interface TextPipeline {
+  type: "text";
+  input: string;               // directory or glob pattern to read
+  writer: Writer;
+}
+```
+
+Reads files from `input`, scans for `$${{var_key}}` tags, resolves each tag via `VariableManager`, applies type coercion from `@synthing/toolkit`, and writes output via the writer.
+
+Flow:
+1. Glob input files
+2. For each file, scan for `$${{...}}` tags
+3. Resolve each tag key via connectors (same resolution precedence as generator pipeline)
+4. Replace tags with resolved values (coerced to target type)
+5. Write output files via writer
+
+Tag format: `$${{variable_key}}` — matches the key registered via `.addVariable()`.
+
+### 6.5 Writer
 
 Per-pipeline writer. Discriminated union on `type`.
 
@@ -362,9 +383,9 @@ type Writer =
   // | { type: "stdout" }
 ```
 
-### 6.5 Resolution is Internal
+### 6.6 Resolution is Internal
 
-Users never call `resolveAll()` directly. The CLI reads `defineConfig()`, runs pipelines, and resolution happens internally during `render()`.
+Users never call `resolveAll()` directly. The CLI reads `defineConfig()`, runs pipelines, and resolution happens internally during `render()` (generator) or tag replacement (text).
 
 ---
 
@@ -374,7 +395,7 @@ Users never call `resolveAll()` directly. The CLI reads `defineConfig()`, runs p
 
 Main command. Reads `defineConfig()`, executes all pipelines, writes output.
 
-Flow:
+**Generator pipeline flow:**
 1. Load config file
 2. For each pipeline:
    a. Call `load(keys)` on all connectors
@@ -382,13 +403,156 @@ Flow:
    c. Call `serialize(content)` on each generator's output
    d. Write serialized files via the pipeline's writer
 
+**Text pipeline flow:**
+1. Load config file
+2. For each pipeline:
+   a. Call `load(keys)` on all connectors
+   b. Glob input files from `input` path
+   c. Scan each file for `$${{...}}` tags
+   d. Resolve each tag key and replace with coerced value
+   e. Write output files via the pipeline's writer
+
 ### 7.2 `synthing variable export-schema`
 
 Outputs the variable schema as JSON. Equivalent to calling `variableManager.toJSON()` and writing to stdout.
 
 ---
 
-## 8. End-to-End Example
+## 8. Kubricate Integration
+
+### 8.1 Goal
+
+Synthing must support the current version of kubricate (`ref/kubricate/`) with **zero changes to kubricate's library code**. Users who choose to integrate synthing with kubricate handle type adjustments in their own template definitions.
+
+### 8.2 Integration Architecture
+
+```
+kubricate generate → YAML with $${{tags}} → synthing generate → final YAML with resolved values
+```
+
+- Two separate CLIs, two separate config files
+- Text files are the only contract between them
+- Tag format `$${{variable_key}}` is the interface
+- Kubricate library has **zero code changes**
+
+### 8.3 How `$var()` Works in Kubricate Context
+
+`$var()` returns a `VariableRef<T>` (see section 2.1), but `VariableRef` implements `toString()` which returns `"$${{key}}"`. When a `VariableRef` is passed to kubricate where a `string` is expected, JavaScript automatically calls `.toString()`:
+
+```ts
+$var("app_name")              // VariableRef<string>
+$var("app_name").toString()   // "$${{app_name}}"
+String($var("port"))          // "$${{port}}"
+
+// In kubricate template (expects string):
+{ name: $var("app_name") }   // JS calls .toString() → "$${{app_name}}"
+```
+
+Users write their own kubricate templates with `string` types for synthing-managed fields:
+
+```ts
+// User's own template — fields that use $var are typed as string
+interface IMyAppStack {
+  name: string;
+  imageName: string;
+  port: string;        // string, not number — user's choice for synthing integration
+}
+```
+
+### 8.4 End-to-End Kubricate Integration Example
+
+**Step 1: Define variables (synthing side)**
+
+```ts
+// synthing.config.ts
+import { VariableManager, defineConfig } from "synthing";
+import { EnvConnector } from "@synthing/plugin-env";
+
+const vm = new VariableManager()
+  .addVariable("app_name", { type: "string" })
+  .addVariable("port", { type: "number", default: 3000 });
+
+const $var = vm.createRef();
+
+export default defineConfig({
+  variable: { variableSpec: vm, strictMode: true },
+  pipelines: [
+    {
+      type: "text",
+      input: "./kubricate-output/",
+      writer: { type: "file", dir: "final-output/" },
+    },
+  ],
+});
+```
+
+**Step 2: Use `$var` in kubricate config (user side)**
+
+```ts
+// kubricate.config.ts
+import { defineConfig, Stack } from "kubricate";
+import { $var } from "./variables"; // $var from synthing's VariableManager
+
+const myTemplate = defineStackTemplate((input: {
+  name: string;
+  imageName: string;
+  port: string;      // string type for synthing integration
+}) => ({ /* ... resources ... */ }));
+
+const stack = Stack.fromTemplate(myTemplate, {
+  name: $var("app_name"),        // "$${{app_name}}" — plain string ✅
+  imageName: "nginx:latest",
+  port: $var("port"),            // "$${{port}}" — plain string ✅
+});
+
+export default defineConfig({
+  stacks: { app: stack },
+  generate: { outputDir: "./kubricate-output" },
+});
+```
+
+**Step 3: Run both CLIs**
+
+```bash
+# 1. Kubricate generates YAML with tags
+kubricate generate
+
+# 2. Synthing resolves tags and writes final output
+APP_APP_NAME=myapp APP_PORT=8080 synthing generate
+```
+
+**Step 4: Output**
+
+```yaml
+# kubricate-output/app/deployment.yaml (intermediate — has tags)
+metadata:
+  name: "$${{app_name}}"
+spec:
+  containers:
+    - ports:
+        - containerPort: "$${{port}}"
+
+# final-output/app/deployment.yaml (final — resolved)
+metadata:
+  name: myapp
+spec:
+  containers:
+    - ports:
+        - containerPort: 8080
+```
+
+### 8.5 What Changes for Whom
+
+| | Changes? | What |
+|---|---|---|
+| Kubricate library code | **No** | Nothing |
+| Kubricate built-in templates | **No** | Nothing |
+| User's template types | **Yes** | Fields using `$var` become `string` |
+| User's kubricate config | **Yes** | Uses `$var()` which returns `"$${{key}}"` strings |
+
+---
+
+## 9. End-to-End Example (Generator Pipeline)
 
 ### Step 1: Define variables and connectors
 
@@ -482,7 +646,7 @@ spec:
 
 ---
 
-## 9. Supported Variable Types
+## 10. Supported Variable Types
 
 Phase 1 types:
 
@@ -494,7 +658,7 @@ Phase 1 types:
 
 ---
 
-## 10. Phase 1 Deliverables
+## 11. Phase 1 Deliverables
 
 - `VariableManager` with builder pattern (`.addVariable()`, `.addConnector()`, `.createRef()`)
 - `$var()` typed deferred immutable references
@@ -504,7 +668,8 @@ Phase 1 types:
 - `YamlGenerator` (built-in)
 - `GeneratorContext` with `resolve()`, `logger`, `outputDir`, `strictMode`
 - `defineConfig()` with `variable` + `pipelines` domains
-- Pipeline type: `"generator"` only
+- Pipeline type: `"generator"` and `"text"`
+- `"text"` pipeline: read files, scan `$${{var_key}}` tags, resolve, write output
 - Writer type: `"file"` only
 - `synthing generate` CLI command
 - `synthing variable export-schema` CLI command
@@ -515,11 +680,10 @@ Phase 1 types:
 
 ---
 
-## 11. Explicitly NOT in Phase 1
+## 12. Explicitly NOT in Phase 1
 
 - `@synthing/secrets` / `SecretManager`
-- `KubricateGenerator`
-- `"text"` pipeline type
+- `KubricateGenerator` (kubricate integration uses `"text"` pipeline instead)
 - `"api"` / `"stdout"` writers
 - Validation enforcement in `resolve()` (min/max/regex)
 - Secret provider / unwrap ceremony
@@ -527,7 +691,7 @@ Phase 1 types:
 
 ---
 
-## 12. Design Decision Index
+## 13. Design Decision Index
 
 For traceability, each major decision is numbered. These numbers correspond to the grilling session that produced this spec.
 
@@ -565,7 +729,7 @@ For traceability, each major decision is numbered. These numbers correspond to t
 32. Format is generator-level, not pipeline-level
 33. `defineConfig()` follows kubricate's pattern
 34. `pipelines` array with discriminated union on `type`
-35. `"generator"` pipeline type for Phase 1; `"text"` future
+35. Both `"generator"` and `"text"` pipeline types in Phase 1
 36. `generators` field name (not `configs`)
 37. Per-pipeline writer with discriminated union
 38. Resolution is internal (user never calls it directly)
@@ -579,3 +743,9 @@ For traceability, each major decision is numbered. These numbers correspond to t
 46. Users install plugins themselves (CLI does not bundle plugins)
 47. GeneratorContext lives in engine layer, not core
 48. YamlGenerator ships in engine layer; future format generators can be separate plugins
+49. `"text"` pipeline pulled into Phase 1 for kubricate integration
+50. `VariableRef.toString()` returns `"$${{key}}"` for use in external tools (kubricate)
+51. Kubricate integration via text pipeline — zero kubricate library changes
+52. Tag format `$${{variable_key}}` is the contract between kubricate and synthing
+53. Users who integrate synthing with kubricate change their own template types to `string`
+54. No `KubricateGenerator` needed — text pipeline replaces it

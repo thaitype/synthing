@@ -4,16 +4,41 @@
 
 Synthing is a full render pipeline that consumes variables (and later secrets) from multiple sources, then generates output through pluggable targets. It is tool-agnostic and not tied to any specific adapter, runtime, or deployment platform.
 
-Synthing extends patterns from [kubricate](https://github.com/AriaBui/kubricate). Kubricate v2 will eventually merge into Synthing.
+Synthing extends patterns from [kubricate](https://github.com/thaitype/kubricate). Kubricate v2 will eventually merge into Synthing.
 
 ### Phase 1 Packages
 
 | Package | Responsibility |
 |---|---|
-| `@synthing/core` | `BaseConnector`, `BaseGenerator`, `GeneratorContext`, shared types, coercion utilities |
-| `@synthing/variables` | `VariableManager`, `$var` ref creation, resolution engine |
-| `@synthing/plugin-env` | `EnvConnector` (domain-agnostic, serves both variables and secrets) |
-| `@synthing/cli` | `defineConfig()`, `synthing generate`, pipeline runner, file writer |
+| `@synthing/core` | Interfaces + types only: `BaseConnector`, `BaseGenerator`, error types, shared type definitions |
+| `@synthing/toolkit` | Pure utility functions: coercion helpers. Zero dependencies. |
+| `synthing` (unscoped) | CLI frontend (`cli/`) + engine (`engine/`): `VariableManager`, `$var`, resolution, `GeneratorContext`, pipeline runner, `YamlGenerator`, `defineConfig()`, CLI commands, file writer |
+| `@synthing/plugin-env` | `EnvConnector` (domain-agnostic, serves both variables and secrets). Peer dep on `@synthing/core`. |
+
+### Package Architecture
+
+```
+@synthing/core        ← no internal deps (interfaces only, rarely changes)
+@synthing/toolkit     ← no internal deps (pure utilities)
+@synthing/plugin-env  ← peer dep: @synthing/core
+synthing              ← depends on: @synthing/core, @synthing/toolkit
+```
+
+**Internal directory structure of `synthing` package:**
+
+```
+packages/synthing/src/
+  cli/       → arg parsing, config file loading, defineConfig(), file writer
+  engine/    → VariableManager, $var, resolution, GeneratorContext, pipeline runner, YamlGenerator
+```
+
+**Rules:**
+- `engine/` never imports from `cli/` (enables future extraction to `@synthing/engine`)
+- `cli/` imports from `engine/`
+- `engine/` has no filesystem I/O, no arg parsing, no `process.argv`
+- `@synthing/core` has minimal surface area to prevent breaking changes across the ecosystem
+- Plugins peer-depend on `@synthing/core` only (not on `synthing`)
+- Users install plugins themselves (`synthing` does not bundle plugins)
 
 ---
 
@@ -81,10 +106,10 @@ For a given key, the value precedence is:
 
 ### 2.6 Type Coercion
 
-**Shared coercion utilities (from `@synthing/core`)** — core exports `coerceFromString()` helpers. Connectors may use them optionally. Core performs the final type-check to ensure basic type matching (a variable declared as `number` returns a number or errors).
+**Shared coercion utilities (from `@synthing/toolkit`)** — toolkit exports `coerceFromString()` helpers. Connectors and the engine may use them. The engine performs the final type-check to ensure basic type matching (a variable declared as `number` returns a number or errors).
 
 ```ts
-// @synthing/core exports
+// @synthing/toolkit exports
 coerceFromString(value: string, targetType: "number"): number
 coerceFromString(value: string, targetType: "boolean"): boolean
 coerceFromString(value: string, targetType: "string"): string
@@ -169,7 +194,7 @@ Users declare keys via `.addVariable()`. Connectors do not contribute or discove
 
 ### 4.1 BaseConnector (in `@synthing/core`)
 
-`BaseConnector` is **domain-agnostic**. The same connector class serves both variables and secrets. It lives in `@synthing/core`, not in `@synthing/variables`.
+`BaseConnector` is **domain-agnostic**. The same connector class serves both variables and secrets. It lives in `@synthing/core` as a pure abstract interface.
 
 Naming: `BaseConnector`, not `BaseVariableConnector` or `BaseVariableResolver`. Aligns with kubricate's `BaseConnector` term.
 
@@ -211,7 +236,7 @@ Users can separate variable vs secret env vars via prefix convention (e.g., `VAR
 
 ### 5.1 BaseGenerator (in `@synthing/core`)
 
-Abstract class with two methods:
+Abstract class with two methods. Lives in `@synthing/core` as a pure abstract interface.
 
 ```ts
 abstract class BaseGenerator {
@@ -227,9 +252,9 @@ abstract class BaseGenerator {
 - `serialize()` turns objects into `SerializedOutput[]` (filename + string content).
 - This matches kubricate's pattern: Stack returns objects, Renderer serializes.
 
-### 5.2 GeneratorContext
+### 5.2 GeneratorContext (in `synthing` engine)
 
-Provided to `render()`. The generator calls `ctx.resolve()` itself — it controls resolution timing.
+Provided to `render()`. The generator calls `ctx.resolve()` itself — it controls resolution timing. Lives in the engine layer (inside `synthing` package), not in `@synthing/core`, because it ties generators to the resolution system.
 
 ```ts
 interface GeneratorContext {
@@ -274,7 +299,7 @@ Each generator handles its own serialization. The pipeline never knows about for
 
 ### 5.5 YamlGenerator (Built-in)
 
-Ships with `@synthing/core` (or `@synthing/cli`). Renders objects to YAML files using its `serialize()` method.
+Ships inside the `synthing` package (engine layer). Renders objects to YAML files using its `serialize()` method. Future format-specific generators (TOML, JSON5, HCL) could be separate plugin packages.
 
 ---
 
@@ -285,7 +310,7 @@ Ships with `@synthing/core` (or `@synthing/cli`). Renders objects to YAML files 
 Follows kubricate's pattern. Top-level keys are domain concerns.
 
 ```ts
-import { defineConfig } from "@synthing/cli";
+import { defineConfig } from "synthing";
 
 export default defineConfig({
   variable: {
@@ -369,9 +394,8 @@ Outputs the variable schema as JSON. Equivalent to calling `variableManager.toJS
 
 ```ts
 // synthing.config.ts
-import { VariableManager } from "@synthing/variables";
+import { VariableManager, YamlGenerator, defineConfig } from "synthing";
 import { EnvConnector } from "@synthing/plugin-env";
-import { YamlGenerator, defineConfig } from "@synthing/cli";
 
 const variableManager = new VariableManager()
   .addVariable("app_name", { type: "string" })
@@ -486,7 +510,7 @@ Phase 1 types:
 - `synthing variable export-schema` CLI command
 - `toJSON()` on `VariableManager` for UI export
 - Strict/loose mode (missing-value behavior only)
-- Type coercion utilities (`coerceFromString`)
+- Type coercion utilities (`coerceFromString`) in `@synthing/toolkit`
 - Secret marker (`secret: true` -> redacted in logs/errors/toJSON)
 
 ---
@@ -514,7 +538,7 @@ For traceability, each major decision is numbered. These numbers correspond to t
 5. Type guarantee via shared coercion
 6. Strict/loose scoped to missing-value behavior only
 7. Explicit priority list, first match wins
-8. Shared coercion utilities in core
+8. Shared coercion utilities in toolkit (moved from core)
 9. Typed `ResolutionError` exceptions
 10. Both-layer defaults (call-site and schema)
 11. Ship both `resolve()` and `resolveAll()`
@@ -545,3 +569,13 @@ For traceability, each major decision is numbered. These numbers correspond to t
 36. `generators` field name (not `configs`)
 37. Per-pipeline writer with discriminated union
 38. Resolution is internal (user never calls it directly)
+39. CLI package is unscoped (`synthing`, not `@synthing/cli`) — follows kubricate pattern
+40. `@synthing/variables` merged into `synthing` package as `engine/` directory
+41. Core is interfaces + types only — minimal surface area to prevent breaking changes
+42. `@synthing/toolkit` for pure utilities (coercion) — standalone, zero deps
+43. Internal `cli/` + `engine/` separation inside `synthing` for future extractability
+44. `engine/` never imports from `cli/` (one-way dependency)
+45. Plugins peer-depend on `@synthing/core` only
+46. Users install plugins themselves (CLI does not bundle plugins)
+47. GeneratorContext lives in engine layer, not core
+48. YamlGenerator ships in engine layer; future format generators can be separate plugins

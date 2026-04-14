@@ -156,7 +156,9 @@ vm.addVariable("extra_env", {
 
 - `schema` is **optional** on all variable types
 - Must implement Standard Schema interface (`~standard`)
-- Enforced at resolve time: `schema["~standard"].validate(resolvedValue)`
+- Resolution pipeline: raw string → coerce by `type` → validate by `schema` (if provided)
+- `type` handles coercion (how to parse), `schema` handles validation (is the value correct)
+- If `type` and `schema` contradict (e.g., `type: "object"` + `z.string()`), coercion succeeds but schema validation fails with a clear error
 - No schema = basic type check only (string/number/boolean/object coercion)
 - If schema also implements [Standard JSON Schema](https://standardschema.dev/json-schema) (`~standard.jsonSchema`), `toJSON()` exports the JSON Schema for UI consumers
 - If no Standard JSON Schema support, `toJSON()` falls back to basic type metadata
@@ -565,16 +567,31 @@ Outputs the variable schema as JSON. Equivalent to calling `variableManager.toJS
 
 Synthing must support the current version of kubricate (`ref/kubricate/`) with **zero changes to kubricate's library code**. Users who choose to integrate synthing with kubricate handle type adjustments in their own template definitions.
 
-### 8.2 Integration Architecture
+### 8.2 Integration Workflows
+
+There are two integration approaches. **In-process (Workflow A) is the primary target for Phase 1.** Two-CLI (Workflow B) is the backup plan if in-process doesn't work.
+
+#### Workflow A: In-Process (Primary — Phase 1 target)
+
+Single `synthing.config.ts`, single CLI command. Kubricate's `Stack.build()` runs inside synthing's generator pipeline.
 
 ```
-kubricate generate → YAML with $${{tags}} → synthing generate → final YAML with resolved values
+synthing generate → calls stack.build() in-process → engine resolves $${{tags}} → writes YAML
 ```
 
-- Two separate CLIs, two separate config files
-- Text files are the only contract between them
-- Tag format `$${{variable_key}}` is the interface
-- Kubricate library has **zero code changes**
+#### Workflow B: Two CLIs (Backup plan)
+
+Separate CLIs, text files as boundary. Falls back to this if kubernetes-models or kubricate internals don't preserve tag strings.
+
+```
+kubricate generate → YAML with $${{tags}} → synthing generate → final YAML
+```
+
+> **Remark:** Investigation of kubernetes-models internals (`filterUndefinedValues` in `@kubernetes-models/base`) shows that tag strings and custom keys like `__synthing_spread` are preserved through the full pipeline (`new Deployment(config)` → `.toJSON()` → `structuredClone()`). Workflow A should work. If it doesn't in practice, Workflow B (two CLIs with text pipeline) is the fallback — all the text pipeline infrastructure is already built for other use cases.
+
+**User's choice:** Both workflows are supported. Workflow A (in-process) gives single-CLI simplicity but skips kubricate-specific features (metadata injection, output modes). Workflow B (two CLIs) provides full kubricate features. Users choose based on their needs.
+
+> **Future:** A PR proposal for kubricate to expose a programmatic generate API (`buildStacks`, `injectMetadata`) would enable Workflow A with full kubricate features. See `_report/kubricate-pr-proposal.md`.
 
 ### 8.3 How `$var()` Works in Kubricate Context
 
@@ -599,16 +616,18 @@ interface IMyAppStack {
 }
 ```
 
-### 8.4 End-to-End Kubricate Integration Example
+### 8.4 Workflow A: In-Process Example (Primary)
 
-**Step 1: Define variables (synthing side)**
+One config file, one CLI command. Kubricate Stack runs inside synthing's generator pipeline.
 
 ```ts
 // synthing.config.ts
 import { z } from "zod";
-import { VariableManager, defineConfig } from "synthing";
+import { VariableManager, YamlGenerator, defineConfig } from "synthing";
 import { EnvConnector } from "@synthing/plugin-env";
+import { Stack, defineStackTemplate } from "kubricate";
 
+// --- Variables ---
 const vm = new VariableManager()
   .addVariable("app_name", { type: "string" })
   .addVariable("port", { type: "number", default: 3000 })
@@ -624,26 +643,7 @@ const vm = new VariableManager()
 
 const { $var, $spread } = vm.createRef();
 
-export default defineConfig({
-  variable: { variableSpec: vm, strictMode: true },
-  pipelines: [
-    {
-      type: "text",
-      input: "./kubricate-output/",
-      writer: { type: "file", dir: "final-output/" },
-    },
-  ],
-});
-```
-
-**Step 2: Use `$var` and `$spread` in kubricate config (user side)**
-
-```ts
-// kubricate.config.ts
-import { defineConfig, Stack, defineStackTemplate } from "kubricate";
-// $var and $spread imported from synthing.config.ts or a shared variables file
-import { $var, $spread } from "./variables";
-
+// --- Kubricate Stack ---
 const myTemplate = defineStackTemplate((input: {
   name: string;
   imageName: string;
@@ -680,56 +680,33 @@ const stack = Stack.fromTemplate(myTemplate, {
   },
 });
 
+// --- Wrap Stack in YamlGenerator ---
+const kubricateGen = new YamlGenerator({
+  create: () => stack.build(),
+});
+
+// --- Export ---
 export default defineConfig({
-  stacks: { app: stack },
-  generate: { outputDir: "./kubricate-output" },
+  variable: { variableSpec: vm, strictMode: true },
+  pipelines: [
+    { type: "generator", generators: [kubricateGen], writer: { type: "file", dir: "output/" } },
+  ],
 });
 ```
 
-**Step 3: Set environment variables and run both CLIs**
-
 ```bash
-export APP_APP_NAME=myapp
-export APP_PORT=8080
-export APP_EXTRA_ENV='[{"name":"DB_HOST","value":"db.prod.example.com"},{"name":"DB_PORT","value":"5432"}]'
-export APP_EXTRA_LABELS='{"version":"1.0.0","team":"backend"}'
-
-# 1. Kubricate generates YAML with tags
-kubricate generate
-
-# 2. Synthing resolves tags and writes final output
-synthing generate
+APP_APP_NAME=myapp APP_PORT=8080 \
+APP_EXTRA_ENV='[{"name":"DB_HOST","value":"db.prod.example.com"}]' \
+APP_EXTRA_LABELS='{"version":"1.0.0","team":"backend"}' \
+  synthing generate
 ```
 
-**Step 4: Intermediate output (kubricate)**
+**Flow:** `stack.build()` returns objects with `$${{tags}}` and `__synthing_spread` markers → generator engine deep-walks, resolves tags, expands spreads → `YamlGenerator.serialize()` → writes final YAML.
+
+**Output:**
 
 ```yaml
-# kubricate-output/app.yml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: "$${{app_name}}"
-  labels:
-    app: "$${{app_name}}"
-    __synthing_spread: "$${{...extra_labels}}"
-spec:
-  containers:
-    - name: "$${{app_name}}"
-      image: nginx:latest
-      ports:
-        - containerPort: "$${{port}}"
-      env:
-        - name: NODE_ENV
-          value: production
-        - __synthing_spread: "$${{...extra_env}}"
-          name: ""
-          value: ""
-```
-
-**Step 5: Final output (synthing)**
-
-```yaml
-# final-output/app.yml
+# output/deployment.yaml
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -749,11 +726,42 @@ spec:
           value: production
         - name: DB_HOST
           value: db.prod.example.com
-        - name: DB_PORT
-          value: "5432"
 ```
 
-### 8.5 What Changes for Whom
+### 8.5 Workflow B: Two CLIs Example (Backup)
+
+If Workflow A doesn't work (e.g., kubernetes-models strips tags in a future version), fall back to two separate CLIs with text pipeline.
+
+**synthing.config.ts:**
+
+```ts
+export default defineConfig({
+  variable: { variableSpec: vm, strictMode: true },
+  pipelines: [
+    { type: "text", input: "./kubricate-output/", writer: { type: "file", dir: "final-output/" } },
+  ],
+});
+```
+
+**kubricate.config.ts:**
+
+```ts
+import { $var, $spread } from "./variables";
+
+// Same stack definition as Workflow A...
+
+export default defineConfig({
+  stacks: { app: stack },
+  generate: { outputDir: "./kubricate-output" },
+});
+```
+
+```bash
+kubricate generate          # outputs YAML with $${{tags}}
+synthing generate           # reads, resolves, writes final
+```
+
+### 8.6 What Changes for Whom
 
 | | Changes? | What |
 |---|---|---|
@@ -989,3 +997,10 @@ For traceability, each major decision is numbered. These numbers correspond to t
 68. `Number()` (strict) over `parseFloat()` (lenient) for number coercion
 69. `createRef()` returns `{ $var, $spread }` — both bound to the VariableManager instance
 70. `$spread` only accepts keys with `type: "object"` (compile-time enforced)
+71. Kubricate in-process (Workflow A) is primary Phase 1 target — `stack.build()` inside generator pipeline
+72. Two-CLI approach (Workflow B) is backup — falls back to text pipeline if in-process fails
+73. kubernetes-models preserves tag strings and `__synthing_spread` through `filterUndefinedValues` + `toJSON()`
+74. Both pipelines use `variableSpec` in-process — no schema file needed in Phase 1
+75. Non-TypeScript config support (schema file, JSON/YAML config) is future, not Phase 1
+76. `synthing export-schema` exports JSON for UI consumers, separate from `synthing generate`
+77. Resolution pipeline order: raw string → coerce by type → validate by schema (if provided)

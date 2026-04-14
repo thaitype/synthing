@@ -281,10 +281,13 @@ Users can separate variable vs secret env vars via prefix convention (e.g., `VAR
 
 ### 5.1 BaseGenerator (in `@synthing/core`)
 
-Abstract class with two methods. Lives in `@synthing/core` as a pure abstract interface.
+Abstract class with a `format` property and two methods. Lives in `@synthing/core` as a pure abstract interface.
 
 ```ts
 abstract class BaseGenerator {
+  /** Format this generator produces — used by engine for resolution */
+  abstract readonly format: "yaml" | "json" | "text";
+
   /** Produce content (objects, not strings) */
   abstract render(ctx: GeneratorContext): Promise<GeneratorOutput>;
 
@@ -420,35 +423,75 @@ interface GeneratorPipeline {
 ```ts
 interface TextPipeline {
   type: "text";
-  input: string;               // directory or glob pattern to read
+  input: string;                          // directory or glob pattern to read
+  format: "yaml" | "json" | "text" | TextFormat;  // explicit format declaration
   writer: Writer;
+}
+
+// Custom format handler interface
+interface TextFormat {
+  parse(content: string): unknown;
+  stringify(data: unknown): string;
 }
 ```
 
-Reads files from `input`, scans for `$${{var_key}}` tags, resolves each tag via `VariableManager`, applies type coercion from `@synthing/toolkit`, and writes output via the writer.
+Reads files from `input`, resolves `$${{var_key}}` tags via `VariableManager`, and writes output via the writer. The `format` field determines how resolution works.
 
 #### Tag Format
 
 Fixed format: `$${{variable_key}}` — not configurable in Phase 1. The `$$` prefix avoids shell substitution conflicts. Matches the key registered via `.addVariable()`.
 
-#### Two Resolution Modes (auto-detected by file extension)
+#### Format Handling
 
-| Mode | Extensions | How |
-|---|---|---|
-| **Plain text** | `.txt`, `.go`, `.env`, all others | Simple string replacement |
-| **Structural** | `.yaml`, `.yml`, `.json` | Parse → replace nodes → re-serialize |
+The `format` field is **explicit** — no auto-detection from file extension.
 
-**Plain text mode:**
+**Built-in formats:**
+
+| Format | Resolution | Typed values | Spread support |
+|---|---|---|---|
+| `"yaml"` | Structural (parse → resolve → re-serialize) | Yes | Yes |
+| `"json"` | Structural (parse → resolve → re-serialize) | Yes | Yes |
+| `"text"` | Plain string replacement | No (all strings) | No |
+
+**Custom format handler:**
+
+```ts
+import * as toml from "toml";
+
+{
+  type: "text",
+  input: "./toml-templates/",
+  format: {
+    parse: (content) => toml.parse(content),
+    stringify: (data) => toml.stringify(data),
+  },
+  writer: { type: "file", dir: "output/" },
+}
+```
+
+Custom handlers get structural resolution (typed values + spread) — same engine as `"yaml"` and `"json"`.
+
+**Plain text mode (`"text"`):**
 - Finds `$${{key}}` in file content
 - Replaces with string value
 - No type awareness — everything becomes string
+- No spread support
 
-**Structural mode:**
-- Parses file into AST (YAML or JSON)
+**Structural mode (`"yaml"`, `"json"`, or custom handler):**
+- Parses file via `format.parse()` (or built-in parser)
 - Walks tree, finds `$${{key}}` string values
 - Replaces with **typed** values (numbers stay numbers, objects stay objects)
-- Re-serializes to file format (indentation handled automatically)
+- Re-serializes via `format.stringify()` (or built-in serializer)
 - Supports spread via `__synthing_spread` marker (see section 6.4.1)
+
+#### Format consistency with generator pipeline
+
+Both pipelines use the same structural resolver. The format is always explicit:
+
+| Pipeline | Format declared by |
+|---|---|
+| Generator | Generator class (`BaseGenerator.format` property) |
+| Text | Pipeline config (`format` field) |
 
 #### 6.4.1 Spread Syntax (`$spread`)
 
@@ -526,9 +569,9 @@ labels:
 #### Flow
 
 1. Glob input files
-2. For each file, detect mode by extension
-3. **Plain text mode:** scan for `$${{key}}` patterns, replace with string values
-4. **Structural mode:** parse file, deep-walk tree:
+2. For each file, use the pipeline's `format` setting:
+3. **Plain text (`"text"`):** scan for `$${{key}}` patterns, replace with string values
+4. **Structural (`"yaml"`, `"json"`, or custom handler):** parse file, deep-walk tree:
    a. Find `__synthing_spread` markers → resolve and expand
    b. Find `$${{key}}` string values → resolve with typed replacement
    c. Re-serialize to file format
@@ -575,8 +618,8 @@ Main command. Reads `defineConfig()`, executes all pipelines, writes output.
 2. For each pipeline:
    a. Call `load(keys)` on all connectors
    b. Glob input files from `input` path
-   c. Detect mode per file (plain text or structural by extension)
-   d. Resolve tags — plain text: string replacement; structural: parse, walk, replace typed values, handle `__synthing_spread`, re-serialize
+   c. Use pipeline's `format` setting (explicit, not auto-detected)
+   d. Resolve tags — `"text"`: string replacement; structural (`"yaml"`, `"json"`, custom): parse, walk, replace typed values, handle `__synthing_spread`, re-serialize
    e. Write output files via the pipeline's writer
 
 ### 7.2 `synthing variable export-schema`
@@ -847,7 +890,7 @@ For users who want full kubricate features (metadata injection, output modes, fi
 export default defineConfig({
   variable: { variableSpec: vm, strictMode: true },
   pipelines: [
-    { type: "text", input: "./kubricate-output/", writer: { type: "file", dir: "final-output/" } },
+    { type: "text", input: "./kubricate-output/", format: "yaml", writer: { type: "file", dir: "final-output/" } },
   ],
 });
 ```
@@ -1063,3 +1106,9 @@ For traceability, each major decision is numbered. These numbers correspond to t
 82. Call-site defaults: `$var("key", { default })` registers default in VariableManager as side effect
 83. Duplicate call-site defaults for same key → throw error (fail fast)
 84. `stack.build()` returns map — user calls `Object.values()` to get array for YamlGenerator
+85. `BaseGenerator.format` property declares output format (`"yaml"`, `"json"`, `"text"`)
+86. Text pipeline `format` field is explicit — no auto-detection from file extension
+87. Text pipeline `format` accepts string shorthand or custom `TextFormat` handler (`parse` + `stringify`)
+88. Custom `TextFormat` handlers get full structural resolution (typed values + spread)
+89. `"text"` format is plain string replacement only (no types, no spread)
+90. Format handling is consistent: generator declares via class property, text pipeline declares via config

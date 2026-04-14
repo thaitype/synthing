@@ -44,20 +44,33 @@ packages/synthing/src/
 
 ## 2. Variable System
 
-### 2.1 Deferred References
+### 2.1 Deferred References (Branded String)
 
-`$var("key")` returns a `VariableRef<T>`, not a resolved value. It is a lightweight marker object that records the key and optional defaults. Resolution happens later, during pipeline execution.
+`$var("key")` returns a `VariableRef<T>` — a **branded string** type. At runtime it is a plain string containing a tag (`"$${{key}}"`). At compile time TypeScript tracks the target type via the brand.
 
 ```ts
-const $var = variableManager.createRef();
+// Type definition
+type VariableRef<T> = string & { __varRef: T; __key: string };
+```
 
-// Returns VariableRef<number>, NOT a number
+```ts
+const { $var, $spread } = variableManager.createRef();
+
+// At compile time: VariableRef<number>
+// At runtime: "$${{port}}"
 const portRef = $var("port", { default: 3000 });
 ```
 
+**Why branded string:**
+- Assignable to `string` — works in any context expecting strings (kubricate templates, YAML serialization, JSON.stringify)
+- Compile-time type safety — `VariableRef<number>` vs `VariableRef<string>` prevents mixing up variable types within synthing's own APIs
+- No class overhead — no `instanceof`, no `toJSON()`, no prototype chain
+- One resolution mechanism — both generator and text pipelines scan for `$${{...}}` tag patterns
+- Runtime type validation — happens at resolution time via schema-based coercion, not at creation time
+
 References are **immutable**. Each call to `$var("key", { default: value })` returns a new `VariableRef`. Multiple call sites can have different defaults for the same key.
 
-**Recommended convention**: `const $var = variableManager.createRef()`. The `$` prefix is a visual marker meaning "this is a reference."
+**Recommended convention**: `const { $var, $spread } = variableManager.createRef()`. The `$` prefix is a visual marker meaning "this is a reference." Users can rename via destructuring (e.g., `const { $var: v, $spread: s } = ...`).
 
 ### 2.2 `$var()` API Shape
 
@@ -65,9 +78,9 @@ Single function signature. Type is inferred from the registry, not from method f
 
 ```ts
 // Type inferred from registry (port was declared as "number")
-$var("port")                      // VariableRef<number>
-$var("port", { default: 3000 })   // VariableRef<number>
-$var("app_name")                  // VariableRef<string>
+$var("port")                      // VariableRef<number> (runtime: "$${{port}}")
+$var("port", { default: 3000 })   // VariableRef<number> (runtime: "$${{port}}")
+$var("app_name")                  // VariableRef<string> (runtime: "$${{app_name}}")
 ```
 
 There are no `.number()` / `.string()` factories and no `.withDefault()` method chaining.
@@ -84,14 +97,16 @@ There are no `.number()` / `.string()` factories and no `.withDefault()` method 
 
 Resolution is **always async**, even for sync sources like environment variables. This avoids breaking the API when async sources are added later.
 
+The engine scans for `$${{key}}` tag patterns in strings, resolves each key via connectors, and coerces to the target type defined in the schema.
+
 ```ts
-// Both resolve() and resolveAll() are async
-async resolve(ref: VariableRef<T>): Promise<T>
-async resolveAll(refs: VariableRef[]): Promise<ResolvedValues>
+// Internal engine API (users never call directly)
+async resolve(tag: string): Promise<unknown>       // single tag resolution
+async resolveAll(input: unknown): Promise<unknown>  // deep-walk and resolve all tags
 ```
 
-- `resolveAll()` is the primary API (batch resolution). `resolve()` is the lower-level primitive.
-- Both are internal to the runtime. Users never call them directly.
+- Both generator and text pipelines use the **same resolution mechanism** — tag pattern matching
+- Resolution is internal to the runtime. Users never call these directly.
 
 ### 2.5 Resolution Precedence
 
@@ -113,11 +128,38 @@ For a given key, the value precedence is:
 coerceFromString(value: string, targetType: "number"): number
 coerceFromString(value: string, targetType: "boolean"): boolean
 coerceFromString(value: string, targetType: "string"): string
+coerceFromString(value: string, targetType: "object"): object | unknown[]
 ```
 
-### 2.7 No Validation Enforcement in Resolve
+For `object` type: `JSON.parse()` the string, reject if result is a primitive (string, number, boolean). Only objects and arrays are accepted.
 
-Metadata constraints (min, max, regex, etc.) are for UI and external consumers only. `resolve()` does NOT enforce them. It only ensures basic type matching via coercion.
+### 2.7 Schema Validation
+
+Variables can optionally provide a `schema` for runtime validation using the [Standard Schema](https://standardschema.dev/) interface. When provided, validation is **enforced at resolve time**.
+
+```ts
+import { z } from "zod";
+
+vm.addVariable("port", {
+  type: "number",
+  schema: z.number().min(1).max(65535),
+})
+
+vm.addVariable("extra_env", {
+  type: "object",
+  schema: z.array(z.object({
+    name: z.string(),
+    value: z.string(),
+  })),
+})
+```
+
+- `schema` is **optional** on all variable types
+- Must implement Standard Schema interface (`~standard`)
+- Enforced at resolve time: `schema["~standard"].validate(resolvedValue)`
+- No schema = basic type check only (string/number/boolean/object coercion)
+- If schema also implements [Standard JSON Schema](https://standardschema.dev/json-schema) (`~standard.jsonSchema`), `toJSON()` exports the JSON Schema for UI consumers
+- If no Standard JSON Schema support, `toJSON()` falls back to basic type metadata
 
 ### 2.8 Strict vs Loose Mode
 
@@ -172,16 +214,17 @@ const variableManager = new VariableManager()
   .addVariable("db_password", { type: "string", secret: true })
   .addConnector("env", new EnvConnector({ prefix: "APP_" }));
 
-const $var = variableManager.createRef();
+const { $var, $spread } = variableManager.createRef();
 ```
 
 - `.addVariable(key, schema)` — registers a variable with its type and metadata. Key is validated against the key regex immediately.
 - `.addConnector(name, connector)` — registers a connector. Order of registration determines priority.
-- `.createRef()` — returns a typed `$var` function bound to this manager's variable declarations.
+- `.createRef()` — returns `{ $var, $spread }` bound to this manager's variable declarations. `$spread` only accepts keys declared with `type: "object"`.
 
 ### 3.2 Schema Export
 
-- `variableManager.toJSON()` — serializes only variable metadata (keys, types, defaults, descriptions, secret flag). Does NOT include connector configuration.
+- `variableManager.toJSON()` — serializes variable metadata (keys, types, defaults, descriptions, secret flag). Does NOT include connector configuration.
+- If a variable has a `schema` that implements Standard JSON Schema (`~standard.jsonSchema`), the JSON Schema is included in the export for UI consumers.
 - CLI command: `synthing variable export-schema` — outputs the same JSON to stdout.
 
 ### 3.3 Keys Declared in Schema, Connectors are Pure Value Readers
@@ -358,14 +401,112 @@ interface TextPipeline {
 
 Reads files from `input`, scans for `$${{var_key}}` tags, resolves each tag via `VariableManager`, applies type coercion from `@synthing/toolkit`, and writes output via the writer.
 
-Flow:
-1. Glob input files
-2. For each file, scan for `$${{...}}` tags
-3. Resolve each tag key via connectors (same resolution precedence as generator pipeline)
-4. Replace tags with resolved values (coerced to target type)
-5. Write output files via writer
+#### Tag Format
 
-Tag format: `$${{variable_key}}` — matches the key registered via `.addVariable()`.
+Fixed format: `$${{variable_key}}` — not configurable in Phase 1. The `$$` prefix avoids shell substitution conflicts. Matches the key registered via `.addVariable()`.
+
+#### Two Resolution Modes (auto-detected by file extension)
+
+| Mode | Extensions | How |
+|---|---|---|
+| **Plain text** | `.txt`, `.go`, `.env`, all others | Simple string replacement |
+| **Structural** | `.yaml`, `.yml`, `.json` | Parse → replace nodes → re-serialize |
+
+**Plain text mode:**
+- Finds `$${{key}}` in file content
+- Replaces with string value
+- No type awareness — everything becomes string
+
+**Structural mode:**
+- Parses file into AST (YAML or JSON)
+- Walks tree, finds `$${{key}}` string values
+- Replaces with **typed** values (numbers stay numbers, objects stay objects)
+- Re-serializes to file format (indentation handled automatically)
+- Supports spread via `__synthing_spread` marker (see section 6.4.1)
+
+#### 6.4.1 Spread Syntax (`$spread`)
+
+For merging arrays/objects from variables into existing structures. Only works in structural mode.
+
+**Helper function (from `createRef()`):**
+
+```ts
+const { $var, $spread } = vm.createRef();
+
+$spread("extra_env")
+// returns { key: "__synthing_spread", value: "$${{...extra_env}}" }
+// Only accepts keys declared with type: "object" — compile error for string/number/boolean keys
+```
+
+**Array spread — insert items into parent array:**
+
+```ts
+env: [
+  { name: "NODE_ENV", value: "production" },
+  { [$spread("extra_env").key]: $spread("extra_env").value, name: "", value: "" },
+]
+```
+
+Serializes to YAML:
+```yaml
+env:
+  - name: NODE_ENV
+    value: production
+  - __synthing_spread: "$${{...extra_env}}"
+    name: ""
+    value: ""
+```
+
+Pipeline detects `__synthing_spread` key → resolves `$${{...extra_env}}` → replaces entire object with expanded array items:
+```yaml
+env:
+  - name: NODE_ENV
+    value: production
+  - name: DB_HOST
+    value: db.prod.example.com
+  - name: DB_PORT
+    value: "5432"
+```
+
+**Object spread — merge keys into parent object:**
+
+```ts
+labels: {
+  app: $var("app_name"),
+  [$spread("extra_labels").key]: $spread("extra_labels").value,
+}
+```
+
+Serializes to YAML:
+```yaml
+labels:
+  app: "$${{app_name}}"
+  __synthing_spread: "$${{...extra_labels}}"
+```
+
+Pipeline detects `__synthing_spread` key → resolves → merges keys into parent, removes marker:
+```yaml
+labels:
+  app: myapp
+  version: 1.0.0
+  team: backend
+```
+
+**Pipeline detection rules:**
+- Array: object with `__synthing_spread` key → resolve value, splice expanded items in place of the marker object
+- Object: key named `__synthing_spread` → resolve value, merge into parent, remove marker key
+- `__synthing_spread` in plain text mode → error
+
+#### Flow
+
+1. Glob input files
+2. For each file, detect mode by extension
+3. **Plain text mode:** scan for `$${{key}}` patterns, replace with string values
+4. **Structural mode:** parse file, deep-walk tree:
+   a. Find `__synthing_spread` markers → resolve and expand
+   b. Find `$${{key}}` string values → resolve with typed replacement
+   c. Re-serialize to file format
+5. Write output files via writer
 
 ### 6.5 Writer
 
@@ -408,8 +549,8 @@ Main command. Reads `defineConfig()`, executes all pipelines, writes output.
 2. For each pipeline:
    a. Call `load(keys)` on all connectors
    b. Glob input files from `input` path
-   c. Scan each file for `$${{...}}` tags
-   d. Resolve each tag key and replace with coerced value
+   c. Detect mode per file (plain text or structural by extension)
+   d. Resolve tags — plain text: string replacement; structural: parse, walk, replace typed values, handle `__synthing_spread`, re-serialize
    e. Write output files via the pipeline's writer
 
 ### 7.2 `synthing variable export-schema`
@@ -437,15 +578,14 @@ kubricate generate → YAML with $${{tags}} → synthing generate → final YAML
 
 ### 8.3 How `$var()` Works in Kubricate Context
 
-`$var()` returns a `VariableRef<T>` (see section 2.1), but `VariableRef` implements `toString()` which returns `"$${{key}}"`. When a `VariableRef` is passed to kubricate where a `string` is expected, JavaScript automatically calls `.toString()`:
+`$var()` returns a `VariableRef<T>` (see section 2.1) — a branded string. At runtime it is `"$${{key}}"`, which is a plain string. It passes any `string` type check and serializes naturally:
 
 ```ts
-$var("app_name")              // VariableRef<string>
-$var("app_name").toString()   // "$${{app_name}}"
-String($var("port"))          // "$${{port}}"
+$var("app_name")    // compile time: VariableRef<string>, runtime: "$${{app_name}}"
+$var("port")        // compile time: VariableRef<number>, runtime: "$${{port}}"
 
 // In kubricate template (expects string):
-{ name: $var("app_name") }   // JS calls .toString() → "$${{app_name}}"
+{ name: $var("app_name") }   // just a string — no conversion needed
 ```
 
 Users write their own kubricate templates with `string` types for synthing-managed fields:
@@ -465,14 +605,24 @@ interface IMyAppStack {
 
 ```ts
 // synthing.config.ts
+import { z } from "zod";
 import { VariableManager, defineConfig } from "synthing";
 import { EnvConnector } from "@synthing/plugin-env";
 
 const vm = new VariableManager()
   .addVariable("app_name", { type: "string" })
-  .addVariable("port", { type: "number", default: 3000 });
+  .addVariable("port", { type: "number", default: 3000 })
+  .addVariable("extra_env", {
+    type: "object",
+    schema: z.array(z.object({ name: z.string(), value: z.string() })),
+  })
+  .addVariable("extra_labels", {
+    type: "object",
+    schema: z.record(z.string()),
+  })
+  .addConnector("env", new EnvConnector({ prefix: "APP_" }));
 
-const $var = vm.createRef();
+const { $var, $spread } = vm.createRef();
 
 export default defineConfig({
   variable: { variableSpec: vm, strictMode: true },
@@ -486,23 +636,48 @@ export default defineConfig({
 });
 ```
 
-**Step 2: Use `$var` in kubricate config (user side)**
+**Step 2: Use `$var` and `$spread` in kubricate config (user side)**
 
 ```ts
 // kubricate.config.ts
-import { defineConfig, Stack } from "kubricate";
-import { $var } from "./variables"; // $var from synthing's VariableManager
+import { defineConfig, Stack, defineStackTemplate } from "kubricate";
+// $var and $spread imported from synthing.config.ts or a shared variables file
+import { $var, $spread } from "./variables";
 
 const myTemplate = defineStackTemplate((input: {
   name: string;
   imageName: string;
-  port: string;      // string type for synthing integration
-}) => ({ /* ... resources ... */ }));
+  port: string;
+  env: ({ name: string; value: string } & Record<string, string>)[];
+  labels: Record<string, string>;
+}) => ({
+  deployment: {
+    apiVersion: "apps/v1",
+    kind: "Deployment",
+    metadata: { name: input.name, labels: input.labels },
+    spec: {
+      containers: [{
+        name: input.name,
+        image: input.imageName,
+        ports: [{ containerPort: input.port }],
+        env: input.env,
+      }],
+    },
+  },
+}));
 
 const stack = Stack.fromTemplate(myTemplate, {
-  name: $var("app_name"),        // "$${{app_name}}" — plain string ✅
+  name: $var("app_name"),
   imageName: "nginx:latest",
-  port: $var("port"),            // "$${{port}}" — plain string ✅
+  port: $var("port"),
+  env: [
+    { name: "NODE_ENV", value: "production" },
+    { [$spread("extra_env").key]: $spread("extra_env").value, name: "", value: "" },
+  ],
+  labels: {
+    app: $var("app_name"),
+    [$spread("extra_labels").key]: $spread("extra_labels").value,
+  },
 });
 
 export default defineConfig({
@@ -511,34 +686,71 @@ export default defineConfig({
 });
 ```
 
-**Step 3: Run both CLIs**
+**Step 3: Set environment variables and run both CLIs**
 
 ```bash
+export APP_APP_NAME=myapp
+export APP_PORT=8080
+export APP_EXTRA_ENV='[{"name":"DB_HOST","value":"db.prod.example.com"},{"name":"DB_PORT","value":"5432"}]'
+export APP_EXTRA_LABELS='{"version":"1.0.0","team":"backend"}'
+
 # 1. Kubricate generates YAML with tags
 kubricate generate
 
 # 2. Synthing resolves tags and writes final output
-APP_APP_NAME=myapp APP_PORT=8080 synthing generate
+synthing generate
 ```
 
-**Step 4: Output**
+**Step 4: Intermediate output (kubricate)**
 
 ```yaml
-# kubricate-output/app/deployment.yaml (intermediate — has tags)
+# kubricate-output/app.yml
+apiVersion: apps/v1
+kind: Deployment
 metadata:
   name: "$${{app_name}}"
+  labels:
+    app: "$${{app_name}}"
+    __synthing_spread: "$${{...extra_labels}}"
 spec:
   containers:
-    - ports:
+    - name: "$${{app_name}}"
+      image: nginx:latest
+      ports:
         - containerPort: "$${{port}}"
+      env:
+        - name: NODE_ENV
+          value: production
+        - __synthing_spread: "$${{...extra_env}}"
+          name: ""
+          value: ""
+```
 
-# final-output/app/deployment.yaml (final — resolved)
+**Step 5: Final output (synthing)**
+
+```yaml
+# final-output/app.yml
+apiVersion: apps/v1
+kind: Deployment
 metadata:
   name: myapp
+  labels:
+    app: myapp
+    version: 1.0.0
+    team: backend
 spec:
   containers:
-    - ports:
+    - name: myapp
+      image: nginx:latest
+      ports:
         - containerPort: 8080
+      env:
+        - name: NODE_ENV
+          value: production
+        - name: DB_HOST
+          value: db.prod.example.com
+        - name: DB_PORT
+          value: "5432"
 ```
 
 ### 8.5 What Changes for Whom
@@ -568,7 +780,7 @@ const variableManager = new VariableManager()
   .addVariable("db_password", { type: "string", secret: true })
   .addConnector("env", new EnvConnector({ prefix: "APP_" }));
 
-const $var = variableManager.createRef();
+const { $var } = variableManager.createRef();
 ```
 
 ### Step 2: Define generators
@@ -653,15 +865,21 @@ Phase 1 types:
 | Type | TS Type | Coercion from string |
 |---|---|---|
 | `"string"` | `string` | identity |
-| `"number"` | `number` | `parseFloat`, error if `NaN` |
+| `"number"` | `number` | `Number()`, error if `NaN` |
 | `"boolean"` | `boolean` | `"true"/"1"` -> `true`, `"false"/"0"` -> `false`, error otherwise |
+| `"object"` | `object \| unknown[]` | `JSON.parse()`, error if result is primitive (not object/array) |
+
+Note: `"number"` uses `Number()` (strict) instead of `parseFloat()` (lenient). `Number("123abc")` → `NaN` → error, while `parseFloat("123abc")` → `123` (silently accepts trailing garbage).
 
 ---
 
 ## 11. Phase 1 Deliverables
 
 - `VariableManager` with builder pattern (`.addVariable()`, `.addConnector()`, `.createRef()`)
-- `$var()` typed deferred immutable references
+- `$var()` branded string deferred references (`VariableRef<T>`)
+- `$spread()` helper for array/object spread in structural mode
+- Variable types: `string`, `number`, `boolean`, `object`
+- Optional `schema` field on all types (Standard Schema interface for runtime validation)
 - `BaseConnector` (two-phase: `load()` + `get()`)
 - `EnvConnector`
 - `BaseGenerator` with `render()` + `serialize()`
@@ -669,11 +887,14 @@ Phase 1 types:
 - `GeneratorContext` with `resolve()`, `logger`, `outputDir`, `strictMode`
 - `defineConfig()` with `variable` + `pipelines` domains
 - Pipeline type: `"generator"` and `"text"`
-- `"text"` pipeline: read files, scan `$${{var_key}}` tags, resolve, write output
+- `"text"` pipeline with two modes:
+  - Plain text: string replacement for all file types
+  - Structural: parse/replace/re-serialize for YAML and JSON (typed values, spread support)
+- `$${{key}}` fixed tag format, `$${{...key}}` spread tag, `__synthing_spread` marker
 - Writer type: `"file"` only
 - `synthing generate` CLI command
 - `synthing variable export-schema` CLI command
-- `toJSON()` on `VariableManager` for UI export
+- `toJSON()` on `VariableManager` for UI export (with Standard JSON Schema when available)
 - Strict/loose mode (missing-value behavior only)
 - Type coercion utilities (`coerceFromString`) in `@synthing/toolkit`
 - Secret marker (`secret: true` -> redacted in logs/errors/toJSON)
@@ -685,9 +906,12 @@ Phase 1 types:
 - `@synthing/secrets` / `SecretManager`
 - `KubricateGenerator` (kubricate integration uses `"text"` pipeline instead)
 - `"api"` / `"stdout"` writers
-- Validation enforcement in `resolve()` (min/max/regex)
 - Secret provider / unwrap ceremony
 - Multi-registry
+- Configurable tag format (fixed `$${{key}}` in Phase 1)
+- Nested/dynamic tag resolution (tag-inside-tag)
+- Full template engine features (conditionals, loops, filters, partials)
+- Structural mode for formats beyond YAML/JSON
 
 ---
 
@@ -695,10 +919,10 @@ Phase 1 types:
 
 For traceability, each major decision is numbered. These numbers correspond to the grilling session that produced this spec.
 
-1. Deferred reference (`$var` returns `VariableRef<T>`, not resolved value)
+1. Deferred reference (`$var` returns branded string `VariableRef<T>`, runtime value is `"$${{key}}"` tag)
 2. Always-async resolution
 3. Typed refs from registry via `.createRef()` with generic accumulation
-4. No validation enforcement in resolve
+4. Schema validation enforced at resolve time when `schema` is provided (Standard Schema interface)
 5. Type guarantee via shared coercion
 6. Strict/loose scoped to missing-value behavior only
 7. Explicit priority list, first match wins
@@ -710,7 +934,7 @@ For traceability, each major decision is numbered. These numbers correspond to t
 13. Both `toJSON()` and CLI export
 14. Flat string keys with dot-cosmetic grouping
 15. Single `$var()` function with options object
-16. Immutable refs (each call returns new VariableRef)
+16. Immutable refs (each call returns new tag string)
 17. Secret marker via `{ secret: true }`
 18. `$` prefix convention for ref variable
 19. `BaseConnector` naming (not `BaseVariableResolver`)
@@ -744,8 +968,24 @@ For traceability, each major decision is numbered. These numbers correspond to t
 47. GeneratorContext lives in engine layer, not core
 48. YamlGenerator ships in engine layer; future format generators can be separate plugins
 49. `"text"` pipeline pulled into Phase 1 for kubricate integration
-50. `VariableRef.toString()` returns `"$${{key}}"` for use in external tools (kubricate)
+50. `VariableRef<T>` is a branded string — runtime value is `"$${{key}}"`, compile-time tracks target type
 51. Kubricate integration via text pipeline — zero kubricate library changes
 52. Tag format `$${{variable_key}}` is the contract between kubricate and synthing
 53. Users who integrate synthing with kubricate change their own template types to `string`
 54. No `KubricateGenerator` needed — text pipeline replaces it
+55. Generator and text pipelines share the same resolution mechanism (tag pattern matching)
+56. Runtime type validation via schema-based coercion at resolution time (e.g. `Number("123abc")` → NaN → error)
+57. `object` variable type — accepts objects and arrays, coerced from JSON string
+58. `$${{key}}` fixed tag format — not configurable in Phase 1
+59. No nested tags, no full template engine — generator pipeline handles complex logic
+60. Structural mode for YAML/JSON — parse, typed replacement, re-serialize
+61. Plain text mode for all other formats — simple string replacement
+62. `$spread()` helper returns `{ key: "__synthing_spread", value: "$${{...key}}" }`
+63. `__synthing_spread` marker key for spread in structural mode
+64. Array spread: marker object replaced with expanded items
+65. Object spread: marker key removed, resolved keys merged into parent
+66. Standard Schema (`~standard`) for optional runtime validation on all variable types
+67. Standard JSON Schema (`~standard.jsonSchema`) for `toJSON()` export when available
+68. `Number()` (strict) over `parseFloat()` (lenient) for number coercion
+69. `createRef()` returns `{ $var, $spread }` — both bound to the VariableManager instance
+70. `$spread` only accepts keys with `type: "object"` (compile-time enforced)

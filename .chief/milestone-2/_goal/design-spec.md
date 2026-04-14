@@ -787,9 +787,11 @@ const stack = Stack.fromTemplate(myTemplate, {
 });
 
 // --- Wrap Stack in YamlGenerator ---
+// stack.build() returns Record<string, unknown> (map of resourceId → resource)
+// Object.values() extracts resources as array → multi-document YAML
 const kubricateGen = new YamlGenerator({
   filename: "app.yaml",
-  create: () => stack.build(),
+  create: () => Object.values(stack.build()),
 });
 
 // --- Export ---
@@ -922,7 +924,44 @@ Note: `"number"` uses `Number()` (strict) instead of `parseFloat()` (lenient). `
 
 ---
 
-## 12. Explicitly NOT in Phase 1
+## 12. Acceptance Criteria
+
+All must pass for milestone-2 to be considered complete.
+
+### Build & Quality
+
+1. `pnpm build` — all packages produce `dist/`
+2. `pnpm check-types` — zero TypeScript errors
+3. `pnpm lint:check` — zero lint errors
+4. `pnpm test` — zero failures
+
+### Packages Exist and Export
+
+5. `@synthing/core` — exports `BaseConnector`, `BaseGenerator`
+6. `@synthing/toolkit` — exports `coerceFromString()`
+7. `synthing` — exports `VariableManager`, `YamlGenerator`, `defineConfig`, `$spread` helper
+8. `@synthing/plugin-env` — exports `EnvConnector`
+
+### Features Work End-to-End
+
+9. Generator pipeline: `YamlGenerator` with `$var()` → `synthing generate` → resolved YAML output
+10. Text pipeline (plain): read file with `$${{tags}}` → resolve → write
+11. Text pipeline (structural YAML): read YAML with `$${{tags}}` → typed resolution → write
+12. Text pipeline (structural JSON): same for JSON
+13. `$spread()` works — array and object spread in structural mode
+14. `synthing export-schema` — outputs variable metadata JSON
+15. Variable types: `string`, `number`, `boolean`, `object` all coerce correctly
+16. Strict mode: missing value with no default → throws `ResolutionError`
+17. Secret marker: `secret: true` → redacted in logs and `toJSON()`
+
+### Kubricate Integration Proven
+
+18. Workflow A (in-process): `Stack.build()` inside `YamlGenerator` → tags resolved → correct YAML output
+19. Workflow B (two CLIs): `kubricate generate` → files with tags → `synthing generate` → resolved output
+
+---
+
+## 13. Explicitly NOT in Phase 1
 
 - `@synthing/secrets` / `SecretManager`
 - `KubricateGenerator` (kubricate integration uses `"text"` pipeline instead)
@@ -936,7 +975,7 @@ Note: `"number"` uses `Number()` (strict) instead of `parseFloat()` (lenient). `
 
 ---
 
-## 13. Design Decision Index
+## 14. Design Decision Index
 
 For traceability, each major decision is numbered. These numbers correspond to the grilling session that produced this spec.
 
@@ -1021,3 +1060,6 @@ For traceability, each major decision is numbered. These numbers correspond to t
 79. YamlGenerator supports single object or array of objects (multi-document YAML with `---`)
 80. Generator pipeline: create() → serialize() → structural resolve → write (no deep-walk, same resolver as text pipeline)
 81. GeneratorContext simplified: only `outputDir` + `logger` (no `resolve()`, no `strictMode`)
+82. Call-site defaults: `$var("key", { default })` registers default in VariableManager as side effect
+83. Duplicate call-site defaults for same key → throw error (fail fast)
+84. `stack.build()` returns map — user calls `Object.values()` to get array for YamlGenerator

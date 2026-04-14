@@ -299,27 +299,26 @@ abstract class BaseGenerator {
 
 ### 5.2 GeneratorContext (in `synthing` engine)
 
-Provided to `render()`. The generator calls `ctx.resolve()` itself — it controls resolution timing. Lives in the engine layer (inside `synthing` package), not in `@synthing/core`, because it ties generators to the resolution system.
+Provided to `render()`. Lives in the engine layer (inside `synthing` package), not in `@synthing/core`.
 
 ```ts
 interface GeneratorContext {
-  resolve<T>(ref: VariableRef<T>): Promise<T>;
   outputDir: string;
   logger: Logger;
-  strictMode: boolean;
 }
 ```
 
-Simple generators call `resolve()` immediately. Complex generators (like a future `KubricateGenerator`) may handle resolution differently.
+Generators do **not** resolve variables — they return objects with `$${{tag}}` strings. The engine resolves all tags after `serialize()` using the structural resolver (same resolver as text pipeline).
 
 ### 5.3 Constructor Shape
 
-Single options object with a `create` field. `$var` is from `createRef()`, not passed into `create`:
+Options object with `filename` and `create` field. `$var` is from `createRef()`, not passed into `create`:
 
 ```ts
 const { $var } = vm.createRef();
 
 const deployment = new YamlGenerator({
+  filename: "deployment.yaml",
   create: () => ({
     apiVersion: "apps/v1",
     kind: "Deployment",
@@ -331,13 +330,45 @@ const deployment = new YamlGenerator({
 });
 ```
 
+`create()` can return a single object or an array of objects. Array produces multi-document YAML (separated by `---`):
+
+```ts
+const resources = new YamlGenerator({
+  filename: "resources.yaml",
+  create: () => [
+    { apiVersion: "apps/v1", kind: "Deployment", metadata: { name: $var("app_name") } },
+    { apiVersion: "v1", kind: "Service", metadata: { name: $var("app_name") } },
+  ],
+});
+```
+
+Output:
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: "$${{app_name}}"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: "$${{app_name}}"
+---
+```
+
 ### 5.4 Format is Generator-Level
 
 Each generator handles its own serialization. The pipeline never knows about format. `YamlGenerator` always outputs YAML. A future `JsonGenerator` would output JSON.
 
 ### 5.5 YamlGenerator (Built-in)
 
-Ships inside the `synthing` package (engine layer). Renders objects to YAML files using its `serialize()` method. Future format-specific generators (TOML, JSON5, HCL) could be separate plugin packages.
+Ships inside the `synthing` package (engine layer). Renders objects to YAML files using its `serialize()` method.
+
+- Single object → single YAML document
+- Array of objects → multi-document YAML with `---` separators (matches kubricate's pattern)
+- Filename provided in constructor
+
+Future format-specific generators (TOML, JSON5, HCL) could be separate plugin packages.
 
 ---
 
@@ -574,6 +605,7 @@ const { $var } = vm.createRef();
 
 // 2. Define generator
 const deployment = new YamlGenerator({
+  filename: "deployment.yaml",
   create: () => ({
     apiVersion: "apps/v1",
     kind: "Deployment",
@@ -756,6 +788,7 @@ const stack = Stack.fromTemplate(myTemplate, {
 
 // --- Wrap Stack in YamlGenerator ---
 const kubricateGen = new YamlGenerator({
+  filename: "app.yaml",
   create: () => stack.build(),
 });
 
@@ -872,7 +905,7 @@ Note: `"number"` uses `Number()` (strict) instead of `parseFloat()` (lenient). `
 - `EnvConnector`
 - `BaseGenerator` with `render()` + `serialize()`
 - `YamlGenerator` (built-in)
-- `GeneratorContext` with `resolve()`, `logger`, `outputDir`, `strictMode`
+- `GeneratorContext` with `outputDir`, `logger`
 - `defineConfig()` with `variable` + `pipelines` domains
 - Pipeline type: `"generator"` and `"text"`
 - `"text"` pipeline with two modes:
@@ -934,8 +967,8 @@ For traceability, each major decision is numbered. These numbers correspond to t
 25. Builder pattern with generic accumulation
 26. `toJSON()` serializes variable metadata only
 27. `BaseGenerator` with `render()` + `serialize()`
-28. Generator calls `ctx.resolve()` (generator controls timing)
-29. `GeneratorContext` shape
+28. Generator does NOT resolve — engine resolves after serialize() via structural resolver
+29. `GeneratorContext` simplified to `outputDir` + `logger` only
 30. `GeneratorOutput.content` is `unknown` (objects, not strings)
 31. Constructor with `create` field
 32. Format is generator-level, not pipeline-level
@@ -984,3 +1017,7 @@ For traceability, each major decision is numbered. These numbers correspond to t
 75. Non-TypeScript config support (schema file, JSON/YAML config) is future, not Phase 1
 76. `synthing export-schema` exports JSON for UI consumers, separate from `synthing generate`
 77. Resolution pipeline order: raw string → coerce by type → validate by schema (if provided)
+78. Generator filename provided in constructor (not in defineConfig)
+79. YamlGenerator supports single object or array of objects (multi-document YAML with `---`)
+80. Generator pipeline: create() → serialize() → structural resolve → write (no deep-walk, same resolver as text pipeline)
+81. GeneratorContext simplified: only `outputDir` + `logger` (no `resolve()`, no `strictMode`)

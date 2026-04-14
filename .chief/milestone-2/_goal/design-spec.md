@@ -314,11 +314,13 @@ Simple generators call `resolve()` immediately. Complex generators (like a futur
 
 ### 5.3 Constructor Shape
 
-Single options object with a `create` field:
+Single options object with a `create` field. `$var` is from `createRef()`, not passed into `create`:
 
 ```ts
+const { $var } = vm.createRef();
+
 const deployment = new YamlGenerator({
-  create: ($var) => ({
+  create: () => ({
     apiVersion: "apps/v1",
     kind: "Deployment",
     metadata: { name: $var("app_name") },
@@ -326,15 +328,6 @@ const deployment = new YamlGenerator({
       replicas: $var("replicas", { default: 1 }),
     },
   }),
-});
-```
-
-Future example (not Phase 1):
-
-```ts
-new KubricateGenerator({
-  create: () => Stack.fromTemplate(...),
-  format: "json",
 });
 ```
 
@@ -561,7 +554,79 @@ Outputs the variable schema as JSON. Equivalent to calling `variableManager.toJS
 
 ---
 
-## 8. Kubricate Integration
+## 8. Simple YamlGenerator Example
+
+A complete standalone example using only synthing — no kubricate.
+
+```ts
+// synthing.config.ts
+import { VariableManager, YamlGenerator, defineConfig } from "synthing";
+import { EnvConnector } from "@synthing/plugin-env";
+
+// 1. Define variables
+const vm = new VariableManager()
+  .addVariable("app_name", { type: "string" })
+  .addVariable("port", { type: "number", default: 3000 })
+  .addVariable("replicas", { type: "number", default: 1 })
+  .addConnector("env", new EnvConnector({ prefix: "APP_" }));
+
+const { $var } = vm.createRef();
+
+// 2. Define generator
+const deployment = new YamlGenerator({
+  create: () => ({
+    apiVersion: "apps/v1",
+    kind: "Deployment",
+    metadata: { name: $var("app_name") },
+    spec: {
+      replicas: $var("replicas"),
+      template: {
+        spec: {
+          containers: [{
+            name: $var("app_name"),
+            image: "nginx:latest",
+            ports: [{ containerPort: $var("port") }],
+          }],
+        },
+      },
+    },
+  }),
+});
+
+// 3. Export config
+export default defineConfig({
+  variable: { variableSpec: vm, strictMode: true },
+  pipelines: [
+    { type: "generator", generators: [deployment], writer: { type: "file", dir: "output/" } },
+  ],
+});
+```
+
+```bash
+APP_APP_NAME=myapp APP_PORT=8080 APP_REPLICAS=3 synthing generate
+```
+
+Output (`output/deployment.yaml`):
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: myapp
+spec:
+  replicas: 3
+  template:
+    spec:
+      containers:
+        - name: myapp
+          image: nginx:latest
+          ports:
+            - containerPort: 8080
+```
+
+---
+
+## 9. Kubricate Integration
 
 ### 8.1 Goal
 
@@ -778,100 +843,6 @@ synthing generate           # reads, resolves, writes final
 | Kubricate built-in templates | **No** | Nothing |
 | User's template types | **Yes** | Fields using `$var` become `string` |
 | User's kubricate config | **Yes** | Uses `$var()` which returns `"$${{key}}"` strings |
-
----
-
-## 9. End-to-End Example (Generator Pipeline)
-
-### Step 1: Define variables and connectors
-
-```ts
-// synthing.config.ts
-import { VariableManager, YamlGenerator, defineConfig } from "synthing";
-import { EnvConnector } from "@synthing/plugin-env";
-
-const variableManager = new VariableManager()
-  .addVariable("app_name", { type: "string" })
-  .addVariable("port", { type: "number", default: 3000 })
-  .addVariable("replicas", { type: "number", default: 1 })
-  .addVariable("db_password", { type: "string", secret: true })
-  .addConnector("env", new EnvConnector({ prefix: "APP_" }));
-
-const { $var } = variableManager.createRef();
-```
-
-### Step 2: Define generators
-
-```ts
-const deployment = new YamlGenerator({
-  create: () => ({
-    apiVersion: "apps/v1",
-    kind: "Deployment",
-    metadata: { name: $var("app_name") },
-    spec: {
-      replicas: $var("replicas"),
-      template: {
-        spec: {
-          containers: [{
-            name: $var("app_name"),
-            env: [
-              { name: "PORT", value: $var("port") },
-              { name: "DB_PASSWORD", value: $var("db_password") },
-            ],
-          }],
-        },
-      },
-    },
-  }),
-});
-```
-
-### Step 3: Export config
-
-```ts
-export default defineConfig({
-  variable: {
-    variableSpec: variableManager,
-    strictMode: true,
-  },
-  pipelines: [
-    {
-      type: "generator",
-      generators: [deployment],
-      writer: { type: "file", dir: "output" },
-    },
-  ],
-});
-```
-
-### Step 4: Run
-
-```bash
-APP_APP_NAME=myapp APP_PORT=8080 APP_REPLICAS=3 APP_DB_PASSWORD=s3cret \
-  synthing generate
-```
-
-### Step 5: Output
-
-`output/deployment.yaml`:
-
-```yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: myapp
-spec:
-  replicas: 3
-  template:
-    spec:
-      containers:
-        - name: myapp
-          env:
-            - name: PORT
-              value: "8080"
-            - name: DB_PASSWORD
-              value: "s3cret"
-```
 
 ---
 

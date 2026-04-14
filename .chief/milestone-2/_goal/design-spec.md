@@ -569,29 +569,38 @@ Synthing must support the current version of kubricate (`ref/kubricate/`) with *
 
 ### 8.2 Integration Workflows
 
-There are two integration approaches. **In-process (Workflow A) is the primary target for Phase 1.** Two-CLI (Workflow B) is the backup plan if in-process doesn't work.
+Both integration approaches are supported. Users choose based on their needs.
 
-#### Workflow A: In-Process (Primary — Phase 1 target)
+#### Workflow A: In-Process
 
-Single `synthing.config.ts`, single CLI command. Kubricate's `Stack.build()` runs inside synthing's generator pipeline.
+Single `synthing.config.ts`, single CLI command. Kubricate's `Stack.build()` runs inside synthing's generator pipeline. Best for users who only need variable resolution.
 
 ```
 synthing generate → calls stack.build() in-process → engine resolves $${{tags}} → writes YAML
 ```
 
-#### Workflow B: Two CLIs (Backup plan)
+#### Workflow B: Two CLIs
 
-Separate CLIs, text files as boundary. Falls back to this if kubernetes-models or kubricate internals don't preserve tag strings.
+Separate CLIs, text files as boundary. Best for users who want full kubricate features (metadata injection, output modes, filtering).
 
 ```
 kubricate generate → YAML with $${{tags}} → synthing generate → final YAML
 ```
 
-> **Remark:** Investigation of kubernetes-models internals (`filterUndefinedValues` in `@kubernetes-models/base`) shows that tag strings and custom keys like `__synthing_spread` are preserved through the full pipeline (`new Deployment(config)` → `.toJSON()` → `structuredClone()`). Workflow A should work. If it doesn't in practice, Workflow B (two CLIs with text pipeline) is the fallback — all the text pipeline infrastructure is already built for other use cases.
+**Trade-offs:**
 
-**User's choice:** Both workflows are supported. Workflow A (in-process) gives single-CLI simplicity but skips kubricate-specific features (metadata injection, output modes). Workflow B (two CLIs) provides full kubricate features. Users choose based on their needs.
+| | Workflow A (In-Process) | Workflow B (Two CLIs) |
+|---|---|---|
+| CLI commands | `synthing generate` | `kubricate generate` + `synthing generate` |
+| Kubricate metadata injection | No (skipped) | Yes |
+| Kubricate output modes | No (synthing handles output) | Yes |
+| Intermediate files | No | Yes |
+| Variable resolution | Yes | Yes |
+| Spread support | Yes | Yes |
 
-> **Future:** A PR proposal for kubricate to expose a programmatic generate API (`buildStacks`, `injectMetadata`) would enable Workflow A with full kubricate features. See `_report/kubricate-pr-proposal.md`.
+> **Remark:** Investigation of kubernetes-models internals (`filterUndefinedValues` in `@kubernetes-models/base`) shows that tag strings and custom keys like `__synthing_spread` are preserved through the full pipeline (`new Deployment(config)` → `.toJSON()` → `structuredClone()`). Both workflows work.
+
+> **Future:** A PR proposal for kubricate to expose a programmatic generate API would enable Workflow A with full kubricate features (metadata injection, output modes). See `_report/kubricate-pr-proposal.md`.
 
 ### 8.3 How `$var()` Works in Kubricate Context
 
@@ -616,7 +625,7 @@ interface IMyAppStack {
 }
 ```
 
-### 8.4 Workflow A: In-Process Example (Primary)
+### 8.4 Workflow A: In-Process Example
 
 One config file, one CLI command. Kubricate Stack runs inside synthing's generator pipeline.
 
@@ -728,9 +737,9 @@ spec:
           value: db.prod.example.com
 ```
 
-### 8.5 Workflow B: Two CLIs Example (Backup)
+### 8.5 Workflow B: Two CLIs Example
 
-If Workflow A doesn't work (e.g., kubernetes-models strips tags in a future version), fall back to two separate CLIs with text pipeline.
+For users who want full kubricate features (metadata injection, output modes, filtering), use two separate CLIs with text pipeline.
 
 **synthing.config.ts:**
 
@@ -997,8 +1006,8 @@ For traceability, each major decision is numbered. These numbers correspond to t
 68. `Number()` (strict) over `parseFloat()` (lenient) for number coercion
 69. `createRef()` returns `{ $var, $spread }` — both bound to the VariableManager instance
 70. `$spread` only accepts keys with `type: "object"` (compile-time enforced)
-71. Kubricate in-process (Workflow A) is primary Phase 1 target — `stack.build()` inside generator pipeline
-72. Two-CLI approach (Workflow B) is backup — falls back to text pipeline if in-process fails
+71. Kubricate in-process (Workflow A) and two-CLI (Workflow B) are both supported — user's choice
+72. Workflow A: single CLI, variable resolution only. Workflow B: full kubricate features (metadata, output modes)
 73. kubernetes-models preserves tag strings and `__synthing_spread` through `filterUndefinedValues` + `toJSON()`
 74. Both pipelines use `variableSpec` in-process — no schema file needed in Phase 1
 75. Non-TypeScript config support (schema file, JSON/YAML config) is future, not Phase 1

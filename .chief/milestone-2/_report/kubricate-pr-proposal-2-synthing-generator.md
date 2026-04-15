@@ -1,4 +1,4 @@
-# PR Proposal: Ship `@kubricate/synthing-generator`
+# PR Proposal: Ship `@kubricate/plugin-synthing`
 
 ## Problem
 
@@ -15,7 +15,7 @@ This works for basic variable resolution, but loses kubricate-specific features:
 
 ## What Users Need
 
-A `KubricateGenerator` class (published by kubricate as `@kubricate/synthing-generator`) that:
+A `KubricateGenerator` class (published by kubricate as `@kubricate/plugin-synthing`) that:
 
 - Extends synthing's `BaseGenerator`
 - Accepts a kubricate config object (in-process, not from file)
@@ -26,7 +26,7 @@ A `KubricateGenerator` class (published by kubricate as `@kubricate/synthing-gen
 ## Example Usage
 
 ```ts
-import { KubricateGenerator } from "@kubricate/synthing-generator";
+import { KubricateGenerator } from "@kubricate/plugin-synthing";
 
 const gen = new KubricateGenerator({
   config: kubricateConfig,

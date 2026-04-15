@@ -742,7 +742,7 @@ kubricate generate → YAML with $${{tags}} → synthing generate → final YAML
 
 > **Future:** Two kubricate PRs would enable Workflow A with full kubricate features:
 > - PR 1: Programmatic generate API — see `_report/kubricate-pr-proposal-1-programmatic-api.md`
-> - PR 2: `@kubricate/synthing-generator` package — see `_report/kubricate-pr-proposal-2-synthing-generator.md`
+> - PR 2: `@kubricate/plugin-synthing` package — see `_report/kubricate-pr-proposal-2-synthing-generator.md`
 
 ### 8.3 How `$var()` Works in Kubricate Context
 

@@ -4,4 +4,4 @@
  * Pure utility functions for synthing. Zero internal dependencies.
  */
 
-export {};
+export { coerceFromString } from "./coerce.js";

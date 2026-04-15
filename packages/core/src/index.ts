@@ -1,12 +1,19 @@
 /**
- * Main entry point for the library
+ * @synthing/core — public API
  *
- * Export all the functions from the library
+ * Interfaces and types only. No implementation logic.
  */
 
-export * from './calculator.js';
-
-/**
- * Export `add` modules with module name `add`
- */
-export * as calculator from './calculator.js';
+export { BaseConnector } from './connector.js';
+export { BaseGenerator } from './generator.js';
+export type { GeneratorOutput, SerializedOutput } from './generator.js';
+export type { GeneratorContext, Logger } from './context.js';
+export { ResolutionError } from './errors.js';
+export type {
+  VariableRef,
+  VariableType,
+  VariableTypeMap,
+  VariableSchemaOptions,
+  StandardSchema,
+  StandardSchemaResult,
+} from './types.js';

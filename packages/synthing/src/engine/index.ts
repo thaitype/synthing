@@ -5,4 +5,11 @@
  * No filesystem I/O, no arg parsing, no process.argv.
  */
 
-export {};
+export { VariableManager } from './variable-manager.js';
+export type {
+  VariableMeta,
+  VariableMetaJSON,
+  VariableManagerJSON,
+  SpreadRef,
+  VariableRefHelper,
+} from './variable-manager.js';

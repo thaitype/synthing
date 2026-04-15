@@ -1007,7 +1007,7 @@ All must pass for milestone-2 to be considered complete.
 ## 13. Explicitly NOT in Phase 1
 
 - `@synthing/secrets` / `SecretManager`
-- `KubricateGenerator` class (kubricate integration uses `YamlGenerator` wrapping `stack.build()` or text pipeline)
+- ~~`KubricateGenerator`~~ — not needed in any phase. `YamlGenerator` wrapping `stack.build()` covers this use case
 - `"api"` / `"stdout"` writers
 - Secret provider / unwrap ceremony
 - Multi-registry

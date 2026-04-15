@@ -740,7 +740,9 @@ kubricate generate → YAML with $${{tags}} → synthing generate → final YAML
 
 > **Remark:** Investigation of kubernetes-models internals (`filterUndefinedValues` in `@kubernetes-models/base`) shows that tag strings and custom keys like `__synthing_spread` are preserved through the full pipeline (`new Deployment(config)` → `.toJSON()` → `structuredClone()`). Both workflows work.
 
-> **Future:** A PR proposal for kubricate to expose a programmatic generate API would enable Workflow A with full kubricate features (metadata injection, output modes). See `_report/kubricate-pr-proposal.md`.
+> **Future:** Two kubricate PRs would enable Workflow A with full kubricate features:
+> - PR 1: Programmatic generate API — see `_report/kubricate-pr-proposal-1-programmatic-api.md`
+> - PR 2: `@kubricate/synthing-generator` package — see `_report/kubricate-pr-proposal-2-synthing-generator.md`
 
 ### 8.3 How `$var()` Works in Kubricate Context
 

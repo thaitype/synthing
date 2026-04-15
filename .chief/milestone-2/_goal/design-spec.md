@@ -286,7 +286,7 @@ Abstract class with a `format` property and two methods. Lives in `@synthing/cor
 ```ts
 abstract class BaseGenerator {
   /** Format this generator produces — used by engine for resolution */
-  abstract readonly format: "yaml" | "json" | "text";
+  abstract readonly format: string;
 
   /** Produce content (objects, not strings) */
   abstract render(ctx: GeneratorContext): Promise<GeneratorOutput>;
@@ -1007,14 +1007,15 @@ All must pass for milestone-2 to be considered complete.
 ## 13. Explicitly NOT in Phase 1
 
 - `@synthing/secrets` / `SecretManager`
-- `KubricateGenerator` (kubricate integration uses `"text"` pipeline instead)
+- `KubricateGenerator` class (kubricate integration uses `YamlGenerator` wrapping `stack.build()` or text pipeline)
 - `"api"` / `"stdout"` writers
 - Secret provider / unwrap ceremony
 - Multi-registry
 - Configurable tag format (fixed `$${{key}}` in Phase 1)
 - Nested/dynamic tag resolution (tag-inside-tag)
 - Full template engine features (conditionals, loops, filters, partials)
-- Structural mode for formats beyond YAML/JSON
+- Non-TypeScript config support (JSON/YAML config files, schema file for non-TS users)
+- Auto-detect format from file extension (format is always explicit)
 
 ---
 
@@ -1112,3 +1113,6 @@ For traceability, each major decision is numbered. These numbers correspond to t
 88. Custom `TextFormat` handlers get full structural resolution (typed values + spread)
 89. `"text"` format is plain string replacement only (no types, no spread)
 90. Format handling is consistent: generator declares via class property, text pipeline declares via config
+91. `BaseGenerator.format` is `string` (not literal union) — extensible, engine does map lookup
+92. CLI uses `yargs` (same as kubricate)
+93. Config loading uses `unconfig` (same as kubricate)

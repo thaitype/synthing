@@ -6,4 +6,4 @@
  */
 
 export { EnvConnector } from "./env-connector.js";
-export type { EnvConnectorOptions } from "./env-connector.js";
+export type { EnvConnectorConfig, SecretValue } from "./env-connector.js";

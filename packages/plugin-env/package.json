@@ -49,5 +49,8 @@
     "url": "https://github.com/thaitype/synthing.git"
   },
   "homepage": "https://github.com/thaitype/synthing/tree/main/packages/plugin-env#readme",
-  "license": "MIT"
+  "license": "MIT",
+  "dependencies": {
+    "dotenv": "^17.4.2"
+  }
 }

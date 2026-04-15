@@ -5,4 +5,5 @@
  * Peer dependency: @synthing/core
  */
 
-export {};
+export { EnvConnector } from "./env-connector.js";
+export type { EnvConnectorOptions } from "./env-connector.js";

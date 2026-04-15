@@ -1,0 +1,49 @@
+{
+  "name": "@synthing/toolkit",
+  "version": "0.0.1",
+  "type": "module",
+  "main": "./dist/cjs/index.js",
+  "module": "./dist/esm/index.js",
+  "types": "./dist/dts/index.d.ts",
+  "exports": {
+    "./package.json": "./package.json",
+    ".": {
+      "types": "./dist/dts/index.d.ts",
+      "import": "./dist/esm/index.js",
+      "default": "./dist/cjs/index.js"
+    }
+  },
+  "scripts": {
+    "build": "mono build",
+    "test": "vitest run",
+    "lint:check": "eslint src --max-warnings 0",
+    "check-types": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@babel/cli": "^7.0.0",
+    "@babel/core": "^7.0.0",
+    "@babel/plugin-transform-export-namespace-from": "^7.0.0",
+    "@babel/plugin-transform-modules-commonjs": "^7.0.0",
+    "@synthing/config-eslint": "workspace:*",
+    "@synthing/config-typescript": "workspace:*",
+    "@synthing/config-vitest": "workspace:*",
+    "@synthing/mono": "workspace:*",
+    "babel-plugin-annotate-pure-calls": "^0.4.0",
+    "eslint": "^9.22.0",
+    "typescript": "^5.0.0",
+    "vitest": "^3.0.0"
+  },
+  "files": [
+    "dist",
+    "src",
+    "package.json",
+    "README.md"
+  ],
+  "description": "Pure utility functions for synthing",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/thaitype/synthing.git"
+  },
+  "homepage": "https://github.com/thaitype/synthing/tree/main/packages/toolkit#readme",
+  "license": "MIT"
+}

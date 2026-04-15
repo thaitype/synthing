@@ -101,6 +101,133 @@ importers:
         specifier: ^3.0.0
         version: 3.2.4(@types/node@22.19.15)
 
+  packages/plugin-env:
+    devDependencies:
+      '@babel/cli':
+        specifier: ^7.0.0
+        version: 7.28.6(@babel/core@7.29.0)
+      '@babel/core':
+        specifier: ^7.0.0
+        version: 7.29.0
+      '@babel/plugin-transform-export-namespace-from':
+        specifier: ^7.0.0
+        version: 7.27.1(@babel/core@7.29.0)
+      '@babel/plugin-transform-modules-commonjs':
+        specifier: ^7.0.0
+        version: 7.28.6(@babel/core@7.29.0)
+      '@synthing/config-eslint':
+        specifier: workspace:*
+        version: link:../../configs/config-eslint
+      '@synthing/config-typescript':
+        specifier: workspace:*
+        version: link:../../configs/config-typescript
+      '@synthing/config-vitest':
+        specifier: workspace:*
+        version: link:../../configs/config-vitest
+      '@synthing/core':
+        specifier: workspace:*
+        version: link:../core
+      '@synthing/mono':
+        specifier: workspace:*
+        version: link:../../tools/mono
+      babel-plugin-annotate-pure-calls:
+        specifier: ^0.4.0
+        version: 0.4.0(@babel/core@7.29.0)
+      eslint:
+        specifier: ^9.22.0
+        version: 9.39.4
+      typescript:
+        specifier: ^5.0.0
+        version: 5.9.3
+      vitest:
+        specifier: ^3.0.0
+        version: 3.2.4(@types/node@22.19.15)
+
+  packages/synthing:
+    dependencies:
+      '@synthing/core':
+        specifier: workspace:*
+        version: link:../core
+      '@synthing/toolkit':
+        specifier: workspace:*
+        version: link:../toolkit
+    devDependencies:
+      '@babel/cli':
+        specifier: ^7.0.0
+        version: 7.28.6(@babel/core@7.29.0)
+      '@babel/core':
+        specifier: ^7.0.0
+        version: 7.29.0
+      '@babel/plugin-transform-export-namespace-from':
+        specifier: ^7.0.0
+        version: 7.27.1(@babel/core@7.29.0)
+      '@babel/plugin-transform-modules-commonjs':
+        specifier: ^7.0.0
+        version: 7.28.6(@babel/core@7.29.0)
+      '@synthing/config-eslint':
+        specifier: workspace:*
+        version: link:../../configs/config-eslint
+      '@synthing/config-typescript':
+        specifier: workspace:*
+        version: link:../../configs/config-typescript
+      '@synthing/config-vitest':
+        specifier: workspace:*
+        version: link:../../configs/config-vitest
+      '@synthing/mono':
+        specifier: workspace:*
+        version: link:../../tools/mono
+      babel-plugin-annotate-pure-calls:
+        specifier: ^0.4.0
+        version: 0.4.0(@babel/core@7.29.0)
+      eslint:
+        specifier: ^9.22.0
+        version: 9.39.4
+      typescript:
+        specifier: ^5.0.0
+        version: 5.9.3
+      vitest:
+        specifier: ^3.0.0
+        version: 3.2.4(@types/node@22.19.15)
+
+  packages/toolkit:
+    devDependencies:
+      '@babel/cli':
+        specifier: ^7.0.0
+        version: 7.28.6(@babel/core@7.29.0)
+      '@babel/core':
+        specifier: ^7.0.0
+        version: 7.29.0
+      '@babel/plugin-transform-export-namespace-from':
+        specifier: ^7.0.0
+        version: 7.27.1(@babel/core@7.29.0)
+      '@babel/plugin-transform-modules-commonjs':
+        specifier: ^7.0.0
+        version: 7.28.6(@babel/core@7.29.0)
+      '@synthing/config-eslint':
+        specifier: workspace:*
+        version: link:../../configs/config-eslint
+      '@synthing/config-typescript':
+        specifier: workspace:*
+        version: link:../../configs/config-typescript
+      '@synthing/config-vitest':
+        specifier: workspace:*
+        version: link:../../configs/config-vitest
+      '@synthing/mono':
+        specifier: workspace:*
+        version: link:../../tools/mono
+      babel-plugin-annotate-pure-calls:
+        specifier: ^0.4.0
+        version: 0.4.0(@babel/core@7.29.0)
+      eslint:
+        specifier: ^9.22.0
+        version: 9.39.4
+      typescript:
+        specifier: ^5.0.0
+        version: 5.9.3
+      vitest:
+        specifier: ^3.0.0
+        version: 3.2.4(@types/node@22.19.15)
+
   tools/mono:
     dependencies:
       '@thaitype/mono-scripts':

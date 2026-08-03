@@ -37,7 +37,7 @@ export function coerceFromString(
       let parsed: unknown;
       try {
         parsed = JSON.parse(value);
-      } catch (err) {
+      } catch {
         throw new TypeError(`Cannot coerce "${value}" to object: invalid JSON`);
       }
       if (

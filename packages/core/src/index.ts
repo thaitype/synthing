@@ -4,7 +4,7 @@
  * Interfaces and types only. No implementation logic.
  */
 
-export { BaseConnector } from './connector.js';
+export type { BaseConnector } from './connector.js';
 export { BaseGenerator } from './generator.js';
 export type { GeneratorOutput, SerializedOutput } from './generator.js';
 export type { GeneratorContext, Logger } from './context.js';

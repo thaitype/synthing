@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { EnvConnector } from "./env-connector.js";
 
 describe("EnvConnector", () => {
@@ -18,7 +18,7 @@ describe("EnvConnector", () => {
   });
 
   describe("with prefix", () => {
-    it("reads env var using prefix + key as-is (no uppercase transform)", async () => {
+    it("reads env var using prefix + key as-is", async () => {
       process.env["APP_port"] = "8080";
       const connector = new EnvConnector({ prefix: "APP_" });
       await connector.load(["port"]);
@@ -44,7 +44,7 @@ describe("EnvConnector", () => {
   });
 
   describe("without prefix", () => {
-    it("reads env var using key as-is (no uppercase transform)", async () => {
+    it("reads env var using key as-is", async () => {
       process.env["port"] = "5000";
       const connector = new EnvConnector();
       await connector.load(["port"]);
@@ -69,28 +69,30 @@ describe("EnvConnector", () => {
     });
   });
 
-  describe("key casing — no uppercase transform", () => {
-    it("uses key exactly as given (mixed-case)", async () => {
-      process.env["APP_myKey"] = "value";
-      const connector = new EnvConnector({ prefix: "APP_" });
-      await connector.load(["myKey"]);
-      expect(connector.get("myKey")).toBe("value");
-    });
-  });
-
-  describe("caseInsensitive option", () => {
-    it("matches env vars case-insensitively when enabled", async () => {
+  describe("case-insensitive matching (default)", () => {
+    it("matches an uppercase env var against a lowercase-declared key by default", async () => {
       process.env["APP_PORT"] = "9090";
-      const connector = new EnvConnector({ prefix: "APP_", caseInsensitive: true });
+      const connector = new EnvConnector({ prefix: "APP_" });
       await connector.load(["port"]);
       expect(connector.get("port")).toBe("9090");
     });
 
-    it("stores key normalized when caseInsensitive is true", async () => {
+    it("stores the key normalized by default", async () => {
       process.env["APP_MYKEY"] = "hello";
-      const connector = new EnvConnector({ prefix: "APP_", caseInsensitive: true });
+      const connector = new EnvConnector({ prefix: "APP_" });
       await connector.load(["myKey"]);
       expect(connector.get("myKey")).toBe("hello");
+    });
+
+    it("can be disabled via caseInsensitive: false, requiring exact case", async () => {
+      process.env["APP_port"] = "8080";
+      const connector = new EnvConnector({
+        prefix: "APP_",
+        caseInsensitive: false,
+      });
+      await expect(connector.load(["PORT"])).rejects.toThrow(
+        "Missing environment variable: APP_PORT"
+      );
     });
   });
 
@@ -115,28 +117,19 @@ describe("EnvConnector", () => {
     });
   });
 
-  describe("tryParseSecretValue()", () => {
-    it("returns raw string for plain strings", () => {
-      const connector = new EnvConnector();
-      expect(connector.tryParseSecretValue("hello")).toBe("hello");
+  describe("raw value passthrough (no coercion)", () => {
+    it("returns a flat-JSON-looking value as the raw, unparsed string", async () => {
+      process.env["APP_config"] = '{"user":"admin","port":5432}';
+      const connector = new EnvConnector({ prefix: "APP_" });
+      await connector.load(["config"]);
+      expect(connector.get("config")).toBe('{"user":"admin","port":5432}');
     });
 
-    it("parses flat JSON object", () => {
-      const connector = new EnvConnector();
-      const result = connector.tryParseSecretValue('{"user":"admin","port":5432}');
-      expect(result).toEqual({ user: "admin", port: 5432 });
-    });
-
-    it("returns raw string for non-flat JSON (arrays)", () => {
-      const connector = new EnvConnector();
-      const result = connector.tryParseSecretValue("[1,2,3]");
-      expect(result).toBe("[1,2,3]");
-    });
-
-    it("returns raw string for non-flat JSON (nested objects)", () => {
-      const connector = new EnvConnector();
-      const result = connector.tryParseSecretValue('{"a":{"b":1}}');
-      expect(result).toBe('{"a":{"b":1}}');
+    it("returns any string untouched, regardless of shape", async () => {
+      process.env["APP_raw"] = "[1,2,3]";
+      const connector = new EnvConnector({ prefix: "APP_" });
+      await connector.load(["raw"]);
+      expect(connector.get("raw")).toBe("[1,2,3]");
     });
   });
 
@@ -154,6 +147,35 @@ describe("EnvConnector", () => {
       const connector = new EnvConnector({ allowDotEnv: false });
       await connector.load(["SKIP_KEY"]);
       expect(connector.get("SKIP_KEY")).toBe("xyz");
+    });
+  });
+
+  describe("maskValues logging", () => {
+    it("masks the logged value by default", async () => {
+      process.env["APP_secret"] = "supersecretvalue";
+      const infoSpy = vi.fn();
+      const connector = new EnvConnector({ prefix: "APP_" });
+      connector.logger = { info: infoSpy, warn: vi.fn(), error: vi.fn() };
+      await connector.load(["secret"]);
+
+      const loggedValueCall = infoSpy.mock.calls.find((call) =>
+        String(call[0]).startsWith("Value:")
+      );
+      expect(loggedValueCall?.[0]).toBe("Value: supe************");
+      expect(loggedValueCall?.[0]).not.toContain("supersecretvalue");
+    });
+
+    it("logs the raw value when maskValues is false", async () => {
+      process.env["APP_secret"] = "supersecretvalue";
+      const infoSpy = vi.fn();
+      const connector = new EnvConnector({ prefix: "APP_", maskValues: false });
+      connector.logger = { info: infoSpy, warn: vi.fn(), error: vi.fn() };
+      await connector.load(["secret"]);
+
+      const loggedValueCall = infoSpy.mock.calls.find((call) =>
+        String(call[0]).startsWith("Value:")
+      );
+      expect(loggedValueCall?.[0]).toBe("Value: supersecretvalue");
     });
   });
 });

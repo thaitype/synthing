@@ -6,4 +6,5 @@
  */
 
 export { EnvConnector } from "./env-connector.js";
-export type { EnvConnectorConfig, SecretValue } from "./env-connector.js";
+export type { EnvConnectorConfig } from "./env-connector.js";
+export { maskingValue } from "./utils.js";

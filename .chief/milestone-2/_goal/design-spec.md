@@ -121,7 +121,9 @@ For a given key, the value precedence is:
 
 ### 2.6 Type Coercion
 
-**Shared coercion utilities (from `@synthing/toolkit`)** — toolkit exports `coerceFromString()` helpers. Connectors and the engine may use them. The engine performs the final type-check to ensure basic type matching (a variable declared as `number` returns a number or errors).
+**Shared coercion utilities (from `@synthing/toolkit`)** — toolkit exports `coerceFromString()` helpers. **Coercion is engine-owned only.** Connectors return raw values exactly as received from their source (e.g. `EnvConnector` returns the raw `process.env` string, untouched) — they never parse, transform, or guess types. The engine is the sole caller of `coerceFromString()`, using the `type` declared via `.addVariable()`, and performs the final type-check (a variable declared as `number` returns a number or errors).
+
+> A connector never knows a key's declared `type` — `load(keys: string[])` only receives key names. Any connector-side coercion would be a blind guess based on value shape, not the user's declared intent, and risks double-coercing values the engine then tries to coerce again. See `.chief/milestone-2/_contract/base-connector-contract.md` for the full rationale.
 
 ```ts
 // @synthing/toolkit exports
@@ -239,26 +241,36 @@ Users declare keys via `.addVariable()`. Connectors do not contribute or discove
 
 ### 4.1 BaseConnector (in `@synthing/core`)
 
-`BaseConnector` is **domain-agnostic**. The same connector class serves both variables and secrets. It lives in `@synthing/core` as a pure abstract interface.
+`BaseConnector` is **domain-agnostic**. The same connector implementation serves both variables and secrets. It lives in `@synthing/core` as a TypeScript **`interface`** (not an `abstract class`) — structural typing avoids the dual-package hazard for third-party connector plugins (a plugin's installed `@synthing/core` copy doesn't need to be the exact same class instance as the host's; it only needs to match the shape).
 
 Naming: `BaseConnector`, not `BaseVariableConnector` or `BaseVariableResolver`. Aligns with kubricate's `BaseConnector` term.
 
+`BaseConnector` has no `SecretValue`-style return type. Kubricate's `SecretValue` union existed to satisfy `BaseProvider.prepare()`'s requirement that secrets be flat and string-serializable for Kubernetes Secret encoding — synthing has no `BaseProvider` equivalent, so there's nothing downstream constraining connector output shape. `get()` returns `unknown | undefined`; concrete connectors narrow it (e.g. `EnvConnector` narrows to `string | undefined`, since env vars are always strings).
+
 ### 4.2 Two-Phase Interface
 
-Matches kubricate's `BaseConnector` interface:
+Matches kubricate's `BaseConnector` interface shape, including the optional working-dir and logger members:
 
 ```ts
-abstract class BaseConnector {
+interface BaseConnector<Config extends object = object> {
+  config: Config;
+  logger?: Logger;
+
   /** Load/prepare values for the given keys (async, called once) */
-  abstract load(keys: string[]): Promise<void>;
+  load(keys: string[]): Promise<void>;
 
   /** Get a single value (sync, called per-key after load) */
-  abstract get(key: string): unknown | undefined;
+  get(key: string): unknown | undefined;
+
+  /** Optional — no-op if a connector doesn't need a working directory */
+  setWorkingDir?(dir: string | undefined): void;
+  getWorkingDir?(): string | undefined;
 }
 ```
 
 - `load(keys[])` — called once with all keys this connector might need. Allows batch fetching.
 - `get(key)` — called per-key after load. Returns the raw value or `undefined`.
+- `config`, `logger`, `setWorkingDir?`, `getWorkingDir?` are part of the shared contract (not connector-specific extras), so engine code can address any connector generically without narrowing to a concrete class.
 
 ### 4.3 EnvConnector (in `@synthing/plugin-env`)
 
@@ -274,6 +286,12 @@ new EnvConnector({ prefix: "APP_" })
 ```
 
 Users can separate variable vs secret env vars via prefix convention (e.g., `VAR_`, `SECRET_`).
+
+**Env var name matching:** `expectedKey = prefix + key`, matched against `process.env` **case-insensitively by default** (`caseInsensitive` defaults to `true`). A declared key `port` with prefix `APP_` matches `APP_PORT`, `APP_port`, or any other casing — there is no uppercase transform of the key itself, matching is case-agnostic instead. This is why the example above (`APP_PORT`) and a lowercase-declared key both work without any extra configuration.
+
+**Coercion boundary:** `get()` returns the raw `process.env` string exactly as read — never JSON-parsed, never transformed. Kubricate's `tryParseSecretValue()` (best-effort JSON-sniffing) is intentionally **not** carried over; per 2.6, coercion is engine-owned only.
+
+**Logging:** `maskValues` config, defaults to `true`. Every value the connector logs is masked via a `maskingValue()` utility, regardless of whether the key is a declared secret — the connector has no visibility into `secret: true` (that's a `VariableManager`-level fact), so it masks indiscriminately rather than guessing. Set `maskValues: false` to log raw values (local debugging only).
 
 ---
 
@@ -1118,3 +1136,14 @@ For traceability, each major decision is numbered. These numbers correspond to t
 91. `BaseGenerator.format` is `string` (not literal union) — extensible, engine does map lookup
 92. CLI uses `yargs` (same as kubricate)
 93. Config loading uses `unconfig` (same as kubricate)
+
+---
+
+### Grilling session 2 — EnvConnector realignment (post-Batch-1)
+
+94. `BaseConnector` is a TypeScript `interface`, not an `abstract class` — structural typing avoids the dual-package hazard for third-party connector plugins
+95. `BaseConnector` interface includes `config`, `logger`, `setWorkingDir?`, `getWorkingDir?` as contract members, not just `load`/`get` — engine code can address any connector generically
+96. No connector-side coercion — `load(keys: string[])` only receives key names, never declared types, so connectors cannot do type-aware coercion. `@synthing/toolkit.coerceFromString` at the engine layer is the sole coercion path
+97. `SecretValue` type dropped entirely — it was a kubricate artifact tied to `BaseProvider`'s Kubernetes-Secret string-serialization constraint, which synthing has no equivalent of. `EnvConnector.get()` narrows to `string | undefined`
+98. `EnvConnector.caseInsensitive` defaults to `true` — env var name matching is case-agnostic by default, so declared lowercase keys match uppercase env vars (and vice versa) without extra config
+99. `EnvConnector` adds `maskValues` config, default `true` — every logged value is masked via `maskingValue()` regardless of secret-ness, since the connector has no visibility into which keys are declared `secret: true`
